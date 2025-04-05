@@ -1,5 +1,5 @@
-// Subject controller 
 const Subject = require('../models/subjectModel');
+const Quiz = require('../models/quizModel');
 
 /**
  * @desc    Get all subjects
@@ -8,8 +8,8 @@ const Subject = require('../models/subjectModel');
  */
 exports.getAllSubjects = async (req, res) => {
   try {
-    const subjects = await Subject.find();
-    
+    const subjects = await Subject.find({ isActive: true });
+
     res.status(200).json({
       status: 'success',
       results: subjects.length,
@@ -74,14 +74,6 @@ exports.createSubject = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating subject:', error);
-    
-    if (error.code === 11000) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'A subject with this name already exists'
-      });
-    }
-    
     res.status(400).json({
       status: 'fail',
       message: error.message
@@ -134,7 +126,7 @@ exports.updateSubject = async (req, res) => {
  */
 exports.deleteSubject = async (req, res) => {
   try {
-    const subject = await Subject.findByIdAndDelete(req.params.id);
+    const subject = await Subject.findById(req.params.id);
     
     if (!subject) {
       return res.status(404).json({
@@ -142,6 +134,10 @@ exports.deleteSubject = async (req, res) => {
         message: 'Subject not found'
       });
     }
+    
+    // Instead of deleting, set isActive to false for soft delete
+    subject.isActive = false;
+    await subject.save();
     
     res.status(204).json({
       status: 'success',
@@ -157,11 +153,11 @@ exports.deleteSubject = async (req, res) => {
 };
 
 /**
- * @desc    Get topics for a subject
+ * @desc    Get all topics for a subject
  * @route   GET /api/subjects/:id/topics
  * @access  Public
  */
-exports.getSubjectTopics = async (req, res) => {
+exports.getTopics = async (req, res) => {
   try {
     const subject = await Subject.findById(req.params.id);
     
@@ -180,7 +176,7 @@ exports.getSubjectTopics = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching subject topics:', error);
+    console.error('Error fetching topics:', error);
     res.status(500).json({
       status: 'error',
       message: 'Server error while fetching topics'
@@ -193,7 +189,7 @@ exports.getSubjectTopics = async (req, res) => {
  * @route   POST /api/subjects/:id/topics
  * @access  Private/Admin
  */
-exports.addTopicToSubject = async (req, res) => {
+exports.addTopic = async (req, res) => {
   try {
     const subject = await Subject.findById(req.params.id);
     
@@ -204,7 +200,9 @@ exports.addTopicToSubject = async (req, res) => {
       });
     }
     
-    // Add the topic to the subject
+    // Set the order for the new topic
+    req.body.order = subject.topics.length + 1;
+    
     subject.topics.push(req.body);
     await subject.save();
     
@@ -224,7 +222,7 @@ exports.addTopicToSubject = async (req, res) => {
 };
 
 /**
- * @desc    Update a topic in a subject
+ * @desc    Update a topic
  * @route   PATCH /api/subjects/:id/topics/:topicId
  * @access  Private/Admin
  */
@@ -239,7 +237,6 @@ exports.updateTopic = async (req, res) => {
       });
     }
     
-    // Find the topic index
     const topicIndex = subject.topics.findIndex(
       topic => topic._id.toString() === req.params.topicId
     );
@@ -251,7 +248,7 @@ exports.updateTopic = async (req, res) => {
       });
     }
     
-    // Update the topic
+    // Update the topic fields
     Object.keys(req.body).forEach(key => {
       subject.topics[topicIndex][key] = req.body[key];
     });
@@ -274,7 +271,7 @@ exports.updateTopic = async (req, res) => {
 };
 
 /**
- * @desc    Delete a topic from a subject
+ * @desc    Delete a topic
  * @route   DELETE /api/subjects/:id/topics/:topicId
  * @access  Private/Admin
  */
@@ -289,7 +286,6 @@ exports.deleteTopic = async (req, res) => {
       });
     }
     
-    // Find the topic index
     const topicIndex = subject.topics.findIndex(
       topic => topic._id.toString() === req.params.topicId
     );
@@ -301,8 +297,13 @@ exports.deleteTopic = async (req, res) => {
       });
     }
     
-    // Remove the topic
     subject.topics.splice(topicIndex, 1);
+    
+    // Reorder remaining topics
+    subject.topics.forEach((topic, index) => {
+      topic.order = index + 1;
+    });
+    
     await subject.save();
     
     res.status(204).json({
@@ -314,6 +315,95 @@ exports.deleteTopic = async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Server error while deleting topic'
+    });
+  }
+};
+
+/**
+ * @desc    Get user progress for a subject
+ * @route   GET /api/subjects/:id/progress
+ * @access  Private
+ */
+exports.getUserProgress = async (req, res) => {
+  try {
+    const subject = await Subject.findById(req.params.id);
+    
+    if (!subject) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Subject not found'
+      });
+    }
+    
+    // In a real app, you'd get the progress from the user model
+    // For now, we'll generate mock progress data
+    const userProgress = {
+      overallProgress: Math.floor(Math.random() * 40) + 30, // Random progress between 30-70%
+      topics: subject.topics.map(topic => ({
+        id: topic._id,
+        name: topic.name,
+        progress: Math.floor(Math.random() * 60) + 20, // Random progress between 20-80%
+        mastery: ['Low', 'Medium', 'High'][Math.floor(Math.random() * 3)] // Random mastery level
+      }))
+    };
+    
+    res.status(200).json({
+      status: 'success',
+      data: {
+        progress: userProgress
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user progress:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Server error while fetching user progress'
+    });
+  }
+};
+
+/**
+ * @desc    Get recommended resources for a subject
+ * @route   GET /api/subjects/:id/recommendations
+ * @access  Private
+ */
+exports.getRecommendedResources = async (req, res) => {
+  try {
+    const subject = await Subject.findById(req.params.id);
+    
+    if (!subject) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Subject not found'
+      });
+    }
+    
+    // In a real app, you'd retrieve personalized recommendations from a recommendation system
+    // For now, we'll generate mock recommendation data
+    const recommendedTypes = ['Practice Quiz', 'Study Notes', 'Video Lesson'];
+    const difficultyLevels = ['Beginner', 'Medium', 'Advanced'];
+    
+    const recommendedResources = subject.topics.slice(0, 3).map((topic, index) => ({
+      id: index + 1,
+      title: `${topic.name} - Comprehensive Guide`,
+      type: recommendedTypes[index % recommendedTypes.length],
+      difficulty: difficultyLevels[index % difficultyLevels.length],
+      estimatedTime: `${Math.floor(Math.random() * 30) + 15} min`,
+      description: `Improve your understanding of ${topic.name} with this ${recommendedTypes[index % recommendedTypes.length].toLowerCase()}.`
+    }));
+    
+    res.status(200).json({
+      status: 'success',
+      results: recommendedResources.length,
+      data: {
+        recommendations: recommendedResources
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching recommendations:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Server error while fetching recommendations'
     });
   }
 };

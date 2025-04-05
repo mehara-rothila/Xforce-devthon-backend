@@ -327,3 +327,67 @@ exports.getQuizzesForSubject = async (req, res) => {
     });
   }
 };
+
+/**
+ * @desc    Get practice quizzes for a subject
+ * @route   GET /api/quizzes/subject/:subjectId/practice
+ * @access  Public
+ */
+exports.getPracticeQuizzes = async (req, res) => {
+  try {
+    const query = { 
+      subject: req.params.subjectId,
+      isPublished: true 
+    };
+    
+    // Apply topic filter if provided
+    if (req.query.topic) {
+      query.topic = req.query.topic;
+    }
+    
+    const quizzes = await Quiz.find(query)
+      .sort({ attempts: -1 })
+      .limit(6);
+    
+    // Format quizzes for practice display
+    const practiceQuizzes = quizzes.map(quiz => ({
+      id: quiz._id,
+      title: quiz.title,
+      questions: quiz.questions.length,
+      difficulty: quiz.difficulty,
+      timeEstimate: `${quiz.timeLimit} min`,
+      averageScore: calculateAverageScore(quiz),
+      attempts: quiz.attempts
+    }));
+
+    res.status(200).json({
+      status: 'success',
+      results: practiceQuizzes.length,
+      data: {
+        practiceQuizzes
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching practice quizzes:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Server error while fetching practice quizzes'
+    });
+  }
+};
+
+// Helper function to calculate average score
+// In a real app, this would come from actual user attempt data
+function calculateAverageScore(quiz) {
+  // For now, generate a score based on difficulty
+  switch (quiz.difficulty) {
+    case 'easy':
+      return Math.floor(Math.random() * 15) + 75; // 75-90
+    case 'medium':
+      return Math.floor(Math.random() * 20) + 65; // 65-85
+    case 'hard':
+      return Math.floor(Math.random() * 20) + 55; // 55-75
+    default:
+      return 70;
+  }
+}

@@ -1,30 +1,23 @@
-// Resource routes 
 const express = require('express');
 const router = express.Router();
-// const resourceController = require('../controllers/resourceController'); // Uncomment when controller is implemented
+const resourceController = require('../controllers/resourceController');
+const { protect, restrictTo } = require('../middleware/auth');
 
-// @route   GET /api/resources
-// @desc    Get all resources with optional filters
-// @access  Public
-router.get('/', (req, res) => {
-  res.status(200).json({ message: 'Get all resources' });
-  // Will be replaced with: resourceController.getAllResources
-});
+// Public routes
+router.get('/', resourceController.getAllResources);
+router.get('/:id', resourceController.getResourceById);
+router.get('/subject/:subjectId', resourceController.getResourcesBySubject);
+router.get('/subject/:subjectId/materials', resourceController.getStudyMaterials);
 
-// @route   GET /api/resources/:id
-// @desc    Get resource by ID
-// @access  Public
-router.get('/:id', (req, res) => {
-  res.status(200).json({ message: `Get resource with ID: ${req.params.id}` });
-  // Will be replaced with: resourceController.getResourceById
-});
+// Protected routes
+router.get('/:id/download', protect, resourceController.downloadResource);
 
-// @route   GET /api/resources/:id/download
-// @desc    Download a resource
-// @access  Private
-router.get('/:id/download', (req, res) => {
-  res.status(200).json({ message: `Download resource with ID: ${req.params.id}` });
-  // Will be replaced with: resourceController.downloadResource
-});
+// Admin only routes
+router.use(protect);
+router.use(restrictTo('admin'));
+
+router.post('/', resourceController.createResource);
+router.patch('/:id', resourceController.updateResource);
+router.delete('/:id', resourceController.deleteResource);
 
 module.exports = router;
