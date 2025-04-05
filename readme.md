@@ -70,16 +70,75 @@ http://localhost:5000/api
 
 For full API documentation, see [API.md](API.md)
 
-## Project Structure
+# xforce-devthon-backend Project Structure
 
 ```
 xforce-devthon-backend/
-├── config/             # Configuration files
-├── controllers/        # Route controllers
-├── middleware/         # Express middleware
-├── models/             # MongoDB schema models
-├── routes/             # API routes
-└── utils/              # Utility functions
+├── .env                       # Environment variables
+├── .gitignore                 # Git ignore file
+├── package.json               # Package configuration
+├── package-lock.json          # Package dependency lock
+├── readme.md                  # Project documentation
+├── server.js                  # Main application entry point
+│
+├── config/                    # Configuration files
+│   ├── config.js              # Application configuration
+│   └── db.js                  # Database connection settings
+│
+├── controllers/               # Business logic controllers
+│   ├── authController.js      # Authentication logic
+│   ├── forumController.js     # Forum management
+│   ├── quizController.js      # Quiz functionality
+│   ├── resourceController.js  # Learning resources
+│   ├── rewardController.js    # Reward system
+│   ├── subjectController.js   # Subject management
+│   └── userController.js      # User management
+│
+├── middleware/                # Application middleware
+│   ├── auth.js                # Authentication middleware
+│   ├── errorHandler.js        # Error handling
+│   └── validation.js          # Input validation
+│
+├── models/                    # Data models
+│   ├── achievementModel.js    # Achievement data model
+│   ├── forumCategoryModel.js  # Forum category model
+│   ├── forumModel.js          # Main forum model
+│   ├── forumReplyModel.js     # Forum replies model
+│   ├── forumTopicModel.js     # Forum topics model
+│   ├── quizModel.js           # Quiz data model
+│   ├── resourceModel.js       # Learning resources model
+│   ├── rewardModel.js         # Rewards model
+│   ├── subjectModel.js        # Subject model
+│   ├── topicModel.js          # Topic model
+│   └── userModel.js           # User data model
+│
+├── node_modules/              # Dependencies (not shown)
+│
+├── -p/                        # Unknown purpose folder
+│
+├── public/                    # Public assets
+│   └── resources/             # Resource files/uploads
+│
+├── routes/                    # API route definitions
+│   ├── authRoutes.js          # Authentication routes
+│   ├── forumRoutes.js         # Forum routes
+│   ├── quizRoutes.js          # Quiz routes
+│   ├── resourceRoutes.js      # Resource routes
+│   ├── rewardRoutes.js        # Reward routes
+│   ├── subjectRoutes.js       # Subject routes
+│   └── userRoutes.js          # User routes
+│
+├── test/                      # Testing
+│   └── api.test.js            # API tests
+│
+└── utils/                     # Utility functions
+    ├── forumSeeder.js         # Script to seed initial forum data
+    ├── forumtest.js           # Utilities or scripts specific to forum testing (?)
+    ├── helpers.js             # General helper functions (e.g., formatting, calculations)
+    ├── logger.js              # Application logging utility
+    ├── seeder.js              # General data seeding script runner/handler
+    └── validators.js          # Reusable validation logic/functions (potentially used by middleware)
+
 ```
 
 ## Contributing
