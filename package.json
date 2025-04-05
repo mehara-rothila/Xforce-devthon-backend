@@ -8,7 +8,9 @@
     "dev": "nodemon server.js",
     "test": "jest",
     "seed": "node utils/seeder.js",
-    "test:api": "node test/api.test.js"
+    "seed:forum": "node utils/forumSeeder.js",
+    "test:api": "node test/api.test.js",
+    "test:forum": "node test/forum.test.js"
   },
   "repository": {
     "type": "git",

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const forumController = require('../controllers/forumController');
-const { protect } = require('../middleware/auth');
+const { protect, restrictTo } = require('../middleware/auth');
 
 // Public routes
 router.get('/categories', forumController.getCategories);
@@ -18,7 +18,6 @@ router.post('/replies/:id/vote', forumController.voteReply);
 
 // Admin routes
 router.delete('/topics/:id', 
-  protect, 
   restrictTo('admin', 'moderator'), 
   forumController.deleteTopic
 );

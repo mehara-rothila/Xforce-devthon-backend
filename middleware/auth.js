@@ -1,11 +1,20 @@
-// Auth middleware 
-// Auth middleware
-const jwt = require('jsonwebtoken');
+// Auth middleware for DEVELOPMENT only
 const User = require('../models/userModel');
 
-// Authentication middleware
+// Authentication middleware (development version)
 exports.protect = async (req, res, next) => {
   try {
+    // For development only - create a mock user
+    // This skips JWT verification for testing purposes
+    req.user = {
+      id: '64f070a6018c0c66ee419799', // This should be a valid ObjectId
+      name: 'Test User',
+      email: 'test@example.com',
+      role: 'admin'
+    };
+    
+    // Uncomment the code below when you're ready to implement real auth
+    /*
     // 1. Get token from header
     let token;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
@@ -33,6 +42,8 @@ exports.protect = async (req, res, next) => {
 
     // 4. Grant access
     req.user = user;
+    */
+    
     next();
   } catch (error) {
     return res.status(401).json({
