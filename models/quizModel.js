@@ -1,4 +1,4 @@
-// Quiz model 
+// Quiz model
 const mongoose = require('mongoose');
 
 // Option Schema (for multiple choice questions)
@@ -11,7 +11,7 @@ const optionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   }
-}, { _id: false });
+}, { _id: false }); // <--- PROBLEM: This prevents options from getting unique IDs
 
 // Question Schema
 const questionSchema = new mongoose.Schema({
@@ -19,8 +19,9 @@ const questionSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Question must have text']
   },
-  options: [optionSchema],
+  options: [optionSchema], // Array of options based on the schema above
   correctAnswer: {
+    // This should store the _id of the correct option IF options have IDs
     type: String
   },
   explanation: {
@@ -35,16 +36,16 @@ const questionSchema = new mongoose.Schema({
     type: Number,
     default: 10
   },
-  // For true/false questions
   isTrueFalse: {
     type: Boolean,
     default: false
   },
-  // For fill-in-the-blank questions
   isFillBlank: {
     type: Boolean,
     default: false
-  }
+  },
+   // Mongoose automatically adds _id to nested schemas unless disabled
+   // So questions *will* have an _id by default.
 });
 
 // Quiz Schema
@@ -63,9 +64,11 @@ const quizSchema = new mongoose.Schema({
     ref: 'Subject',
     required: [true, 'Quiz must belong to a subject']
   },
-  topic: {
+  topic: { // Optional: Link to a specific topic within a subject
     type: mongoose.Schema.ObjectId,
-    ref: 'Subject.topics'
+    // If topics are embedded in Subject, referencing might be complex.
+    // Consider if Topic should be its own collection if you need direct refs often.
+    ref: 'Subject.topics' // This reference might not work as expected if topics are embedded.
   },
   difficulty: {
     type: String,
@@ -76,7 +79,7 @@ const quizSchema = new mongoose.Schema({
     type: Number, // In minutes
     default: 30
   },
-  questions: [questionSchema],
+  questions: [questionSchema], // Embed the questions
   isPublished: {
     type: Boolean,
     default: false
@@ -89,33 +92,37 @@ const quizSchema = new mongoose.Schema({
     type: mongoose.Schema.ObjectId,
     ref: 'User'
   },
-  attempts: {
+  attempts: { // Number of times the quiz has been attempted
     type: Number,
     default: 0
   },
-  rating: {
+  rating: { // Average user rating
     type: Number,
     default: 0,
     min: 0,
     max: 5
   }
 }, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
+  timestamps: true, // Adds createdAt and updatedAt
+  toJSON: { virtuals: true }, // Ensure virtuals are included when converting to JSON
+  toObject: { virtuals: true } // Ensure virtuals are included when converting to object
 });
 
-// Virtual for calculating total questions
+// Virtual property to easily get the number of questions
 quizSchema.virtual('totalQuestions').get(function() {
   return this.questions.length;
 });
 
-// Virtual for calculating total points possible
+// Virtual property to calculate total possible points
 quizSchema.virtual('totalPoints').get(function() {
-  return this.questions.reduce((sum, question) => sum + question.points, 0);
+  // Ensure questions array exists before reducing
+  if (!this.questions || this.questions.length === 0) {
+    return 0;
+  }
+  return this.questions.reduce((sum, question) => sum + (question.points || 0), 0);
 });
 
-// Create the model
+// Create the model from the schema
 const Quiz = mongoose.model('Quiz', quizSchema);
 
 module.exports = Quiz;
