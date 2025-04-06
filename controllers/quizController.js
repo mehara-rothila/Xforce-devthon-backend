@@ -20,14 +20,31 @@ exports.getAllQuizzes = async (req, res, next) => { // Added next
     if (req.query.difficulty) {
         queryObj.difficulty = req.query.difficulty;
     }
-    // Example: Filter by published status (adjust field name based on your model)
-    if (queryObj.isPublished === undefined) { // Default to only published quizzes
+
+    // --- CORRECTED Published Status Filter ---
+    // Default to published=true only if the parameter is completely missing
+    if (req.query.isPublished === undefined) {
+        console.log("isPublished not provided, defaulting to true.");
         queryObj.isPublished = true;
-    } else if (queryObj.isPublished === 'false') {
-        queryObj.isPublished = false; // Allow fetching unpublished if explicitly requested
+    } else if (req.query.isPublished === 'false') {
+        console.log("isPublished is 'false', fetching unpublished.");
+        queryObj.isPublished = false; // Explicitly fetch only unpublished
+    } else if (req.query.isPublished === 'true') {
+        console.log("isPublished is 'true', fetching published.");
+        queryObj.isPublished = true; // Explicitly fetch only published
+    } else if (req.query.isPublished === 'all') {
+        // If 'all', remove the isPublished property from the query object
+        // so it doesn't filter by published status at all.
+        console.log("isPublished is 'all', removing filter.");
+        delete queryObj.isPublished;
     } else {
+        // Optional: Handle invalid isPublished values, or default to published
+        // For safety, let's default to published if an unknown value is passed
+        console.warn(`Invalid isPublished value received: ${req.query.isPublished}. Defaulting to true.`);
         queryObj.isPublished = true;
     }
+    // --- End CORRECTED Filter ---
+
 
     // Handle text search (if needed, add search logic similar to resources)
     if (req.query.search) {
@@ -46,14 +63,17 @@ exports.getAllQuizzes = async (req, res, next) => { // Added next
         } else {
              console.warn("Quiz subject filter provided but contained no valid ObjectIds:", req.query.subject);
              // Match nothing if filter is present but invalid
-             queryObj._id = null;
+             queryObj._id = null; // Or handle as needed: maybe return empty results immediately?
         }
     }
     // --- End Subject Filter ---
 
+    console.log("Final Query Object:", queryObj); // Log the final query object for debugging
+
     // --- Total Count ---
     // Calculate total count matching filters BEFORE pagination
     const totalResults = await Quiz.countDocuments(queryObj);
+    console.log("Total results found:", totalResults);
 
     // --- Main Query Execution ---
     let query = Quiz.find(queryObj);
@@ -66,20 +86,24 @@ exports.getAllQuizzes = async (req, res, next) => { // Added next
       query = query.sort('-createdAt'); // Default sort
     }
 
+
     // --- Field Limiting ---
-    if (req.query.fields) {
+     if (req.query.fields) {
       const fields = req.query.fields.split(',').join(' ');
       query = query.select(fields);
     } else {
       query = query.select('-__v'); // Exclude __v by default
     }
 
+
     // --- Pagination ---
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10; // Use a reasonable default limit
+    // Use a higher limit for admin view, or keep the original default
+    const limit = parseInt(req.query.limit, 10) || 100; // Default limit (adjust as needed)
     const skip = (page - 1) * limit;
 
     query = query.skip(skip).limit(limit);
+
 
     // Populate subject field
     query = query.populate({
@@ -89,12 +113,13 @@ exports.getAllQuizzes = async (req, res, next) => { // Added next
 
     // Execute query
     const quizzes = await query;
+    console.log("Quizzes fetched for current page:", quizzes.length);
+
 
     // Calculate total pages
     const totalPages = Math.ceil(totalResults / limit);
 
     // --- Send Response ---
-    // Follow the same structure as getAllResources for consistency
     res.status(200).json({
       status: 'success',
       totalResults: totalResults, // Total matching documents
@@ -121,7 +146,7 @@ exports.getQuizById = async (req, res, next) => { // Added next
     const quiz = await Quiz.findById(req.params.id).populate({
       path: 'subject',
       select: 'name color icon'
-    });
+    }); // Consider populating questions and options if needed directly
 
     if (!quiz) {
       return res.status(404).json({
@@ -156,6 +181,7 @@ exports.createQuiz = async (req, res, next) => { // Added next
      if (!req.body.title) {
          return res.status(400).json({ status: 'fail', message: 'Quiz title is required.' });
      }
+     // Add more validation as needed (e.g., questions array)
 
     // Validate that subject exists
     const subject = await Subject.findById(req.body.subject);
@@ -163,11 +189,38 @@ exports.createQuiz = async (req, res, next) => { // Added next
       return res.status(404).json({ status: 'fail', message: 'Subject not found' });
     }
 
+    // TODO: Add validation for questions and options structure if needed before creating
+
     // Create quiz
-    const newQuiz = await Quiz.create({
+    const newQuizData = {
       ...req.body,
-      createdBy: req.user ? req.user._id : undefined // Get user from auth middleware
-    });
+      createdBy: req.user ? req.user._id : undefined // Get user from auth middleware if available
+    };
+
+    // Ensure options within questions have IDs if they are missing (though model should handle this if not disabled)
+    if (newQuizData.questions && Array.isArray(newQuizData.questions)) {
+        newQuizData.questions.forEach(q => {
+            if (q.options && Array.isArray(q.options)) {
+                q.options.forEach(opt => {
+                    if (!opt._id) {
+                        opt._id = new mongoose.Types.ObjectId(); // Assign new ID if missing
+                    }
+                });
+                // Ensure correctAnswer points to a valid option _id within the question
+                const correctOption = q.options.find(opt => opt.isCorrect);
+                if (correctOption && correctOption._id) {
+                    q.correctAnswer = correctOption._id.toString();
+                } else {
+                    // Handle cases where no correct answer is marked or options are missing IDs
+                    console.warn(`Question "${q.text}" might be missing a correct answer or option IDs.`);
+                    q.correctAnswer = null; // Or handle as appropriate
+                }
+            }
+        });
+    }
+
+
+    const newQuiz = await Quiz.create(newQuizData);
 
     res.status(201).json({
       status: 'success',
@@ -178,7 +231,7 @@ exports.createQuiz = async (req, res, next) => { // Added next
   } catch (error) {
     console.error('Error creating quiz:', error);
      if (error.name === 'ValidationError') {
-        return res.status(400).json({ status: 'fail', message: error.message });
+         return res.status(400).json({ status: 'fail', message: error.message });
     }
     next(error); // Pass other errors
   }
@@ -191,9 +244,36 @@ exports.createQuiz = async (req, res, next) => { // Added next
  */
 exports.updateQuiz = async (req, res, next) => { // Added next
   try {
+
+    const updateData = { ...req.body };
+
+    // Ensure options within questions have IDs if they are missing
+    // And update correctAnswer based on isCorrect flag
+    if (updateData.questions && Array.isArray(updateData.questions)) {
+        updateData.questions.forEach(q => {
+            if (q.options && Array.isArray(q.options)) {
+                let foundCorrectAnswerId = null;
+                q.options.forEach(opt => {
+                    // Ensure option has an ID, generate if missing (important for updates)
+                    if (!opt._id) {
+                        opt._id = new mongoose.Types.ObjectId();
+                    }
+                    if (opt.isCorrect) {
+                        foundCorrectAnswerId = opt._id.toString();
+                    }
+                });
+                 // Update the question's correctAnswer field
+                q.correctAnswer = foundCorrectAnswerId;
+            } else {
+                 q.correctAnswer = null; // No options, no correct answer
+            }
+        });
+    }
+
+
     const quiz = await Quiz.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData, // Use the potentially modified updateData
       { new: true, runValidators: true }
     );
 
@@ -210,7 +290,7 @@ exports.updateQuiz = async (req, res, next) => { // Added next
   } catch (error) {
     console.error('Error updating quiz:', error);
      if (error.name === 'ValidationError') {
-        return res.status(400).json({ status: 'fail', message: error.message });
+         return res.status(400).json({ status: 'fail', message: error.message });
     }
     next(error); // Pass other errors
   }
@@ -230,7 +310,7 @@ exports.deleteQuiz = async (req, res, next) => { // Added next
     }
 
     // Optionally: Delete related attempts or other cleanup
-    // await QuizAttempt.deleteMany({ quiz: req.params.id });
+    // await UserQuizAttempt.deleteMany({ quiz: req.params.id });
 
     res.status(204).json({ status: 'success', data: null });
   } catch (error) {
@@ -252,75 +332,85 @@ exports.submitQuizAttempt = async (req, res, next) => { // Added next
     }
 
     // Basic validation
-    const { answers } = req.body;
+    const { answers } = req.body; // answers should be [{ questionId: '...', answerId: '...' }]
     if (!answers || !Array.isArray(answers)) {
       return res.status(400).json({ status: 'fail', message: 'Answers must be provided as an array' });
     }
 
-    // --- Score Calculation Logic (Keep your existing detailed logic here) ---
+    // --- Score Calculation Logic ---
     let score = 0;
-    let totalPoints = 0;
-    quiz.questions.forEach((question, index) => {
+    let totalPoints = 0; // Use the virtual property or recalculate if needed
+    quiz.questions.forEach((question) => {
         const questionPoints = question.points || 1; // Default points if not specified
         totalPoints += questionPoints;
         const userAnswer = answers.find(a => a.questionId === question._id.toString());
-        if (!userAnswer) return;
 
-        // Example: Check multiple choice
-        if (question.options && question.options.length > 0) {
-            const correctOption = question.options.find(opt => opt.isCorrect);
-            if (correctOption && userAnswer.answerId === correctOption._id.toString()) {
+        if (userAnswer && userAnswer.answerId) {
+            // Check multiple choice using correctAnswer field which should store the correct option's _id
+            if (question.correctAnswer && userAnswer.answerId === question.correctAnswer.toString()) {
                 score += questionPoints;
             }
+            // Add checks for other question types if needed, comparing userAnswer.answerId/value to question.correctAnswer
         }
-        // Add checks for other question types (true/false, fill-in-the-blank) based on your schema
-        // else if (question.isTrueFalse && userAnswer.answer === question.correctAnswer) { score += questionPoints; }
-        // else if (question.isFillBlank && userAnswer.answer.toLowerCase() === question.correctAnswer.toLowerCase()) { score += questionPoints; }
     });
     // --- End Score Calculation ---
 
-    const percentageScore = totalPoints > 0 ? (score / totalPoints) * 100 : 0;
-    const passed = percentageScore >= (quiz.passScore || 0);
+    const percentageScore = totalPoints > 0 ? Math.round((score / totalPoints) * 100) : 0;
+    const passed = percentageScore >= (quiz.passScore || 0); // Use default passScore from quiz
 
     // Update quiz attempts count
     quiz.attempts = (quiz.attempts || 0) + 1;
-    await quiz.save({ validateBeforeSave: false });
+    await quiz.save({ validateBeforeSave: false }); // Skip validation as we only update attempts count
 
     // TODO: Save the attempt details to a separate UserQuizAttempt collection
-    // Example: await UserQuizAttempt.create({ user: req.user._id, quiz: quiz._id, answers, score, percentageScore, passed });
+    // const attempt = await UserQuizAttempt.create({
+    //    user: req.user._id, // Assuming req.user is populated by auth middleware
+    //    quiz: quiz._id,
+    //    answers: answers, // Store the submitted answers
+    //    score: score,
+    //    totalPoints: totalPoints,
+    //    percentageScore: percentageScore,
+    //    passed: passed,
+    //    timeTaken: req.body.timeTaken // Optional: Track time taken from frontend
+    // });
 
     res.status(200).json({
       status: 'success',
+      message: 'Quiz attempt submitted successfully.', // Added a message
       data: { score, totalPoints, percentageScore, passed }
     });
   } catch (error) {
     console.error('Error submitting quiz attempt:', error);
     // Don't send back raw error messages usually
-    res.status(400).json({ status: 'fail', message: 'Error processing quiz attempt.' });
-    // Use next(error) if you have a robust global error handler
+    res.status(500).json({ status: 'error', message: 'Error processing quiz attempt.' }); // Changed to 500 for server-side errors
+    // Use next(error) if you have a robust global error handler that handles responses
   }
 };
 
 /**
- * @desc    Get quizzes for a subject (Potentially redundant if getAllQuizzes handles subject filter)
- * @route   GET /api/subjects/:id/quizzes
+ * @desc    Get quizzes for a specific subject
+ * @route   GET /api/subjects/:id/quizzes (Note: This route might be defined in subjectRoutes.js)
  * @access  Public
  */
 exports.getQuizzesForSubject = async (req, res, next) => { // Added next
   try {
-    const subjectId = req.params.id;
+    const subjectId = req.params.id; // Assuming subject ID is passed as :id
     if (!mongoose.Types.ObjectId.isValid(subjectId)) {
         return res.status(400).json({ status: 'fail', message: 'Invalid Subject ID' });
     }
-    const subject = await Subject.findById(subjectId);
-    if (!subject) {
-      return res.status(404).json({ status: 'fail', message: 'Subject not found' });
-    }
+    // Optional: Check if subject exists
+    // const subject = await Subject.findById(subjectId);
+    // if (!subject) {
+    //   return res.status(404).json({ status: 'fail', message: 'Subject not found' });
+    // }
 
-    // Add filtering/pagination if needed
-    const queryObj = { subject: subjectId /*, isPublished: true */ };
+    // Add filtering/pagination if needed from req.query
+    const queryObj = { subject: subjectId, isPublished: true }; // Default to only published for this view
     const totalResults = await Quiz.countDocuments(queryObj);
-    const quizzes = await Quiz.find(queryObj).populate('subject', 'name color');
+    const quizzes = await Quiz.find(queryObj)
+                              .populate('subject', 'name color')
+                              .sort('-createdAt') // Example sort
+                              .limit(10); // Example limit
 
     res.status(200).json({
       status: 'success',
@@ -343,7 +433,7 @@ exports.getPracticeQuizzes = async (req, res, next) => { // Added next
   try {
     const subjectId = req.params.subjectId;
      if (!mongoose.Types.ObjectId.isValid(subjectId)) {
-        return res.status(400).json({ status: 'fail', message: 'Invalid Subject ID' });
+         return res.status(400).json({ status: 'fail', message: 'Invalid Subject ID' });
     }
 
     const query = {
@@ -351,9 +441,9 @@ exports.getPracticeQuizzes = async (req, res, next) => { // Added next
       isPublished: true // Only show published quizzes as practice
     };
 
-    // Apply topic filter if provided
+    // Apply topic filter if provided and valid
     if (req.query.topic && mongoose.Types.ObjectId.isValid(req.query.topic)) {
-      query.topic = req.query.topic; // Assuming 'topic' field exists in Quiz model
+      query.topic = req.query.topic; // Assuming 'topic' field exists in Quiz model linking to a Topic ID
     }
 
     const quizzes = await Quiz.find(query)
@@ -367,8 +457,8 @@ exports.getPracticeQuizzes = async (req, res, next) => { // Added next
       questions: quiz.questions?.length || 0, // Use optional chaining
       difficulty: quiz.difficulty,
       timeEstimate: quiz.timeLimit ? `${quiz.timeLimit} min` : 'N/A',
-      // Replace calculateAverageScore with real data if available
-      averageScore: calculateAverageScore(quiz),
+      // Replace calculateAverageScore with real data if available, e.g., from attempts
+      averageScore: calculateAverageScore(quiz), // Using placeholder helper
       attempts: quiz.attempts || 0
     }));
 
@@ -384,17 +474,14 @@ exports.getPracticeQuizzes = async (req, res, next) => { // Added next
 };
 
 // Helper function to calculate average score (Placeholder)
+// TODO: Replace this with actual calculation based on saved attempts if needed
 function calculateAverageScore(quiz) {
-  // In a real app, fetch actual average from attempts data
+  // In a real app, fetch actual average from attempts data or calculate based on quiz stats
   // This is just a placeholder based on difficulty
   switch (quiz.difficulty) {
-    case 'easy': return Math.floor(Math.random() * 15) + 75;
-    case 'medium': return Math.floor(Math.random() * 20) + 65;
-    case 'hard': return Math.floor(Math.random() * 20) + 55;
+    case 'easy': return Math.floor(Math.random() * 15) + 75; // 75-90
+    case 'medium': return Math.floor(Math.random() * 20) + 65; // 65-85
+    case 'hard': return Math.floor(Math.random() * 20) + 55; // 55-75
     default: return 70;
   }
 }
-
-// Remember to export all functions used in your routes file
-// module.exports = { /* ... include all exported functions ... */ };
-
