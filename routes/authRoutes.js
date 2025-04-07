@@ -1,33 +1,21 @@
-// Auth routes 
+// routes/authRoutes.js
 const express = require('express');
+const authController = require('../controllers/authController'); // Adjust path if needed
+const { protect } = require('../middleware/authMiddleware'); // <-- Import the protect middleware
+
 const router = express.Router();
-// const authController = require('../controllers/authController'); // Uncomment when controller is implemented
 
-// @route   POST /api/auth/register
-// @desc    Register a new user
-// @access  Public
-router.post('/register', (req, res) => {
-  // Temporary implementation until controller is set up
-  res.status(200).json({ message: 'Register route working' });
-  // Will be replaced with: authController.register
-});
+// --- Authentication Routes ---
 
-// @route   POST /api/auth/login
-// @desc    Authenticate user & get token
-// @access  Public
-router.post('/login', (req, res) => {
-  // Temporary implementation until controller is set up
-  res.status(200).json({ message: 'Login route working' });
-  // Will be replaced with: authController.login
-});
+// Public Routes
+router.post('/register', authController.register);
+router.post('/login', authController.login);
+router.post('/forgot-password', authController.forgotPassword);
+router.post('/reset-password', authController.resetPassword);
 
-// @route   GET /api/auth/me
-// @desc    Get current user
-// @access  Private
-router.get('/me', (req, res) => {
-  // Temporary implementation until controller is set up
-  res.status(200).json({ message: 'Get current user route working' });
-  // Will be replaced with: authController.getCurrentUser
-});
+// Private Route - Get Current User Details
+// Apply the 'protect' middleware before the controller function
+router.get('/me', protect, authController.getMe); // <-- Added protect middleware
+
 
 module.exports = router;
