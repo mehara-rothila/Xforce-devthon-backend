@@ -1,9 +1,11 @@
+// controllers/resourceController.js
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const Resource = require('../models/resourceModel');
 const Subject = require('../models/subjectModel');
-const Quiz = require('../models/quizModel'); // Assuming quiz model is here
+const Quiz = require('../models/quizModel');
+const ResourceAccess = require('../models/resourceAccessModel');
 
 // Helper function
 function getTimeAgo(date) {
@@ -23,7 +25,6 @@ function getTimeAgo(date) {
     if (interval >= 1) return interval === 1 ? '1 minute ago' : `${interval} minutes ago`;
     return 'just now';
 }
-
 
 /**
  * @desc    Get all resources with filtering, sorting, pagination, and total count
@@ -77,7 +78,6 @@ exports.getAllResources = async (req, res, next) => {
              queryObj._id = null;
         }
     }
-    // --- End Subject Filter ---
 
     // --- Total Count ---
     // Calculate total count matching filters BEFORE pagination
@@ -218,7 +218,6 @@ exports.getCategoryCounts = async (req, res, next) => {
   }
 };
 
-
 /**
  * @desc    Get resource by ID
  * @route   GET /api/resources/:id
@@ -233,6 +232,15 @@ exports.getResourceById = async (req, res, next) => {
       return res.status(404).json({
         status: 'fail',
         message: 'Resource not found or not active'
+      });
+    }
+
+    // Log view access if user is authenticated
+    if (req.user && req.user.id) {
+      await ResourceAccess.create({
+        user: req.user.id,
+        resource: resource._id,
+        accessType: 'view'
       });
     }
 
@@ -345,6 +353,9 @@ exports.deleteResource = async (req, res, next) => {
         });
     }
 
+    // Delete all access logs for this resource
+    await ResourceAccess.deleteMany({ resource: resource._id });
+
     res.status(204).json({ status: 'success', data: null });
   } catch (error) {
     console.error('Error deleting resource:', error);
@@ -382,6 +393,15 @@ exports.downloadResource = async (req, res, next) => {
     // Increment Download Count
     resource.downloads = (resource.downloads || 0) + 1;
     await resource.save({ validateBeforeSave: false });
+    
+    // Log the access (new code)
+    if (req.user && req.user.id) {
+      await ResourceAccess.create({
+        user: req.user.id,
+        resource: resource._id,
+        accessType: 'download'
+      });
+    }
 
     // Send File
     const filename = path.basename(resource.filePath);
@@ -402,7 +422,6 @@ exports.downloadResource = async (req, res, next) => {
     next(error);
   }
 };
-
 
 /**
  * @desc    Get study materials for a subject
@@ -484,19 +503,68 @@ exports.getResourcesBySubject = async (req, res, next) => {
   }
 };
 
-// Make sure to export all functions used in your routes file
-// (You'll need to uncomment and adjust this based on your actual file structure)
-/*
- module.exports = {
-     getAllResources,
-     getResourceById,
-     createResource,
-     updateResource,
-     deleteResource,
-     downloadResource,
-     getStudyMaterials,
-     getResourcesBySubject,
-     getCategoryCounts // <-- Make sure the new function is exported
- };
-*/
-
+/**
+ * @desc    Get user's resource access history
+ * @route   GET /api/resources/user/:userId/history
+ * @access  Private
+ */
+exports.getUserResourceHistory = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    
+    // Make sure only admin or the user can access their own history
+    if (req.user.id !== userId && req.user.role !== 'admin') {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'You are not authorized to access this data'
+      });
+    }
+    
+    // Get user access history with pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    const accessHistory = await ResourceAccess.find({ user: userId })
+      .sort('-createdAt')
+      .skip(skip)
+      .limit(limit)
+      .populate({
+        path: 'resource',
+        select: 'title category type subject',
+        populate: {
+          path: 'subject',
+          select: 'name color'
+        }
+      });
+      
+    const totalResults = await ResourceAccess.countDocuments({ user: userId });
+    
+    // Format the history data
+    const history = accessHistory.map(item => ({
+      id: item._id,
+      resourceId: item.resource._id,
+      title: item.resource.title,
+      category: item.resource.category,
+      type: item.resource.type,
+      subject: item.resource.subject.name,
+      subjectColor: item.resource.subject.color,
+      accessType: item.accessType,
+      accessedAt: item.createdAt
+    }));
+    
+    res.status(200).json({
+      status: 'success',
+      results: history.length,
+      totalResults,
+      totalPages: Math.ceil(totalResults / limit),
+      currentPage: page,
+      data: {
+        history
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user resource history:', error);
+    next(error);
+  }
+};

@@ -1,14 +1,16 @@
-// Quiz controller
-const mongoose = require('mongoose'); // Required for ObjectId validation
+// controllers/quizController.js
+const mongoose = require('mongoose');
 const Quiz = require('../models/quizModel');
 const Subject = require('../models/subjectModel');
+const QuizAttempt = require('../models/quizAttemptModel');
+const User = require('../models/userModel');
 
 /**
  * @desc    Get all quizzes with filtering, sorting, pagination, and total count
  * @route   GET /api/quizzes
  * @access  Public
  */
-exports.getAllQuizzes = async (req, res, next) => { // Added next
+exports.getAllQuizzes = async (req, res, next) => {
   try {
     // --- Filtering ---
     let queryObj = { ...req.query };
@@ -141,12 +143,12 @@ exports.getAllQuizzes = async (req, res, next) => { // Added next
  * @route   GET /api/quizzes/:id
  * @access  Public
  */
-exports.getQuizById = async (req, res, next) => { // Added next
+exports.getQuizById = async (req, res, next) => {
   try {
     const quiz = await Quiz.findById(req.params.id).populate({
       path: 'subject',
       select: 'name color icon'
-    }); // Consider populating questions and options if needed directly
+    }); 
 
     if (!quiz) {
       return res.status(404).json({
@@ -172,7 +174,7 @@ exports.getQuizById = async (req, res, next) => { // Added next
  * @route   POST /api/quizzes
  * @access  Private/Admin (Apply middleware in routes)
  */
-exports.createQuiz = async (req, res, next) => { // Added next
+exports.createQuiz = async (req, res, next) => {
   try {
     // Basic validation
      if (!req.body.subject || !mongoose.Types.ObjectId.isValid(req.body.subject)) {
@@ -189,12 +191,10 @@ exports.createQuiz = async (req, res, next) => { // Added next
       return res.status(404).json({ status: 'fail', message: 'Subject not found' });
     }
 
-    // TODO: Add validation for questions and options structure if needed before creating
-
     // Create quiz
     const newQuizData = {
       ...req.body,
-      createdBy: req.user ? req.user._id : undefined // Get user from auth middleware if available
+      createdBy: req.user ? req.user.id : undefined // Get user from auth middleware if available
     };
 
     // Ensure options within questions have IDs if they are missing (though model should handle this if not disabled)
@@ -219,7 +219,6 @@ exports.createQuiz = async (req, res, next) => { // Added next
         });
     }
 
-
     const newQuiz = await Quiz.create(newQuizData);
 
     res.status(201).json({
@@ -242,9 +241,8 @@ exports.createQuiz = async (req, res, next) => { // Added next
  * @route   PATCH /api/quizzes/:id
  * @access  Private/Admin (Apply middleware in routes)
  */
-exports.updateQuiz = async (req, res, next) => { // Added next
+exports.updateQuiz = async (req, res, next) => {
   try {
-
     const updateData = { ...req.body };
 
     // Ensure options within questions have IDs if they are missing
@@ -269,7 +267,6 @@ exports.updateQuiz = async (req, res, next) => { // Added next
             }
         });
     }
-
 
     const quiz = await Quiz.findByIdAndUpdate(
       req.params.id,
@@ -301,7 +298,7 @@ exports.updateQuiz = async (req, res, next) => { // Added next
  * @route   DELETE /api/quizzes/:id
  * @access  Private/Admin (Apply middleware in routes)
  */
-exports.deleteQuiz = async (req, res, next) => { // Added next
+exports.deleteQuiz = async (req, res, next) => {
   try {
     const quiz = await Quiz.findByIdAndDelete(req.params.id);
 
@@ -309,8 +306,8 @@ exports.deleteQuiz = async (req, res, next) => { // Added next
       return res.status(404).json({ status: 'fail', message: 'Quiz not found' });
     }
 
-    // Optionally: Delete related attempts or other cleanup
-    // await UserQuizAttempt.deleteMany({ quiz: req.params.id });
+    // Delete all associated quiz attempts
+    await QuizAttempt.deleteMany({ quiz: req.params.id });
 
     res.status(204).json({ status: 'success', data: null });
   } catch (error) {
@@ -324,66 +321,125 @@ exports.deleteQuiz = async (req, res, next) => { // Added next
  * @route   POST /api/quizzes/:id/attempts
  * @access  Private (Apply middleware in routes)
  */
-exports.submitQuizAttempt = async (req, res, next) => { // Added next
+exports.submitQuizAttempt = async (req, res, next) => {
   try {
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request params:', JSON.stringify(req.params, null, 2));
+    console.log('Request user:', req.user);
+    
     const quiz = await Quiz.findById(req.params.id);
     if (!quiz) {
       return res.status(404).json({ status: 'fail', message: 'Quiz not found' });
     }
 
     // Basic validation
-    const { answers } = req.body; // answers should be [{ questionId: '...', answerId: '...' }]
+    const { answers, timeTaken } = req.body;
     if (!answers || !Array.isArray(answers)) {
       return res.status(400).json({ status: 'fail', message: 'Answers must be provided as an array' });
     }
 
     // --- Score Calculation Logic ---
     let score = 0;
-    let totalPoints = 0; // Use the virtual property or recalculate if needed
-    quiz.questions.forEach((question) => {
-        const questionPoints = question.points || 1; // Default points if not specified
-        totalPoints += questionPoints;
-        const userAnswer = answers.find(a => a.questionId === question._id.toString());
-
-        if (userAnswer && userAnswer.answerId) {
-            // Check multiple choice using correctAnswer field which should store the correct option's _id
-            if (question.correctAnswer && userAnswer.answerId === question.correctAnswer.toString()) {
-                score += questionPoints;
-            }
-            // Add checks for other question types if needed, comparing userAnswer.answerId/value to question.correctAnswer
-        }
+    let totalPoints = 0;
+    
+    // Process answers
+    const processedAnswers = answers.map(answer => {
+      const question = quiz.questions.find(q => q._id.toString() === answer.questionId);
+      if (!question) return { ...answer, isCorrect: false };
+      
+      const questionPoints = question.points || 1;
+      totalPoints += questionPoints;
+      
+      let isCorrect = false;
+      if (question.correctAnswer && answer.answerId === question.correctAnswer.toString()) {
+        score += questionPoints;
+        isCorrect = true;
+      }
+      
+      return {
+        questionId: answer.questionId,
+        answerId: answer.answerId,
+        isCorrect
+      };
     });
-    // --- End Score Calculation ---
 
     const percentageScore = totalPoints > 0 ? Math.round((score / totalPoints) * 100) : 0;
-    const passed = percentageScore >= (quiz.passScore || 0); // Use default passScore from quiz
+    const passed = percentageScore >= (quiz.passScore || 0);
 
     // Update quiz attempts count
     quiz.attempts = (quiz.attempts || 0) + 1;
-    await quiz.save({ validateBeforeSave: false }); // Skip validation as we only update attempts count
+    await quiz.save({ validateBeforeSave: false });
 
-    // TODO: Save the attempt details to a separate UserQuizAttempt collection
-    // const attempt = await UserQuizAttempt.create({
-    //    user: req.user._id, // Assuming req.user is populated by auth middleware
-    //    quiz: quiz._id,
-    //    answers: answers, // Store the submitted answers
-    //    score: score,
-    //    totalPoints: totalPoints,
-    //    percentageScore: percentageScore,
-    //    passed: passed,
-    //    timeTaken: req.body.timeTaken // Optional: Track time taken from frontend
-    // });
+    // Save the attempt details to QuizAttempt collection if user is authenticated
+    let attemptId = null;
+    
+    // For testing - handle anonymous submissions
+    if (req.user && req.user.id) {
+      try {
+        const attempt = await QuizAttempt.create({
+          user: req.user.id,
+          quiz: quiz._id,
+          answers: processedAnswers,
+          score: score,
+          totalPoints: totalPoints,
+          percentageScore: percentageScore,
+          passed: passed,
+          timeTaken: timeTaken || null
+        });
+        attemptId = attempt._id;
+        
+        // Award XP for registered users
+        if (passed) {
+          try {
+            // Award XP to the user based on quiz difficulty and score
+            const xpGained = Math.floor(percentageScore * 0.5); // Simple XP calculation
+            
+            // Update user XP
+            const user = await User.findById(req.user.id);
+            if (user) {
+              user.xp += xpGained;
+              
+              // Check for level up - simple level formula
+              const oldLevel = user.level;
+              const newLevel = Math.floor(1 + Math.sqrt(user.xp / 100));
+              
+              if (newLevel > oldLevel) {
+                user.level = newLevel;
+              }
+              
+              await user.save();
+            }
+          } catch (xpError) {
+            console.error('Error updating user XP:', xpError);
+            // Continue even if XP update fails
+          }
+        }
+      } catch (attemptError) {
+        console.error('Error saving quiz attempt:', attemptError);
+        // Continue even if saving the attempt fails - we'll still return the score
+      }
+    } else {
+      console.log('Quiz submitted anonymously (no user authentication)');
+    }
 
+    // Return the results regardless of whether we saved the attempt
     res.status(200).json({
       status: 'success',
-      message: 'Quiz attempt submitted successfully.', // Added a message
-      data: { score, totalPoints, percentageScore, passed }
+      message: 'Quiz attempt submitted successfully.',
+      data: { 
+        attemptId,
+        score, 
+        totalPoints, 
+        percentageScore, 
+        passed 
+      }
     });
   } catch (error) {
     console.error('Error submitting quiz attempt:', error);
-    // Don't send back raw error messages usually
-    res.status(500).json({ status: 'error', message: 'Error processing quiz attempt.' }); // Changed to 500 for server-side errors
-    // Use next(error) if you have a robust global error handler that handles responses
+    res.status(500).json({ 
+      status: 'error', 
+      message: 'Error processing quiz attempt: ' + (error.message || 'Unknown error')
+    });
   }
 };
 
@@ -392,7 +448,7 @@ exports.submitQuizAttempt = async (req, res, next) => { // Added next
  * @route   GET /api/subjects/:id/quizzes (Note: This route might be defined in subjectRoutes.js)
  * @access  Public
  */
-exports.getQuizzesForSubject = async (req, res, next) => { // Added next
+exports.getQuizzesForSubject = async (req, res, next) => {
   try {
     const subjectId = req.params.id; // Assuming subject ID is passed as :id
     if (!mongoose.Types.ObjectId.isValid(subjectId)) {
@@ -429,7 +485,7 @@ exports.getQuizzesForSubject = async (req, res, next) => { // Added next
  * @route   GET /api/quizzes/subject/:subjectId/practice
  * @access  Public
  */
-exports.getPracticeQuizzes = async (req, res, next) => { // Added next
+exports.getPracticeQuizzes = async (req, res, next) => {
   try {
     const subjectId = req.params.subjectId;
      if (!mongoose.Types.ObjectId.isValid(subjectId)) {
@@ -450,17 +506,32 @@ exports.getPracticeQuizzes = async (req, res, next) => { // Added next
       .sort({ attempts: -1 }) // Example sort: most attempted
       .limit(6); // Limit to a few practice quizzes
 
+    // Get user's previous attempts if authenticated
+    let userAttempts = [];
+    if (req.user && req.user._id) {
+      userAttempts = await QuizAttempt.find({ 
+        user: req.user._id,
+        quiz: { $in: quizzes.map(q => q._id) }
+      }).sort({ createdAt: -1 });
+    }
+
     // Format quizzes for practice display
-    const practiceQuizzes = quizzes.map(quiz => ({
-      id: quiz._id,
-      title: quiz.title,
-      questions: quiz.questions?.length || 0, // Use optional chaining
-      difficulty: quiz.difficulty,
-      timeEstimate: quiz.timeLimit ? `${quiz.timeLimit} min` : 'N/A',
-      // Replace calculateAverageScore with real data if available, e.g., from attempts
-      averageScore: calculateAverageScore(quiz), // Using placeholder helper
-      attempts: quiz.attempts || 0
-    }));
+    const practiceQuizzes = quizzes.map(quiz => {
+      // Check if user has attempted this quiz
+      const userAttempt = userAttempts.find(a => a.quiz.toString() === quiz._id.toString());
+      
+      return {
+        id: quiz._id,
+        title: quiz.title,
+        questions: quiz.questions?.length || 0,
+        difficulty: quiz.difficulty,
+        timeEstimate: quiz.timeLimit ? `${quiz.timeLimit} min` : 'N/A',
+        attempts: quiz.attempts || 0,
+        userScore: userAttempt ? userAttempt.percentageScore : null,
+        userAttempted: !!userAttempt,
+        userPassed: userAttempt ? userAttempt.passed : false
+      };
+    });
 
     res.status(200).json({
       status: 'success',
@@ -473,11 +544,77 @@ exports.getPracticeQuizzes = async (req, res, next) => { // Added next
   }
 };
 
-// Helper function to calculate average score (Placeholder)
-// TODO: Replace this with actual calculation based on saved attempts if needed
+/**
+ * @desc    Get user's quiz attempts
+ * @route   GET /api/quizzes/user/:userId/attempts
+ * @access  Private
+ */
+exports.getUserQuizAttempts = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    
+    // Ensure user can only see their own attempts (unless admin)
+    if (req.user && req.user.id !== userId && req.user.role !== 'admin') {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'You do not have permission to access these records'
+      });
+    }
+    
+    // Pagination
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+    
+    // Get attempts with populated quiz details
+    const attempts = await QuizAttempt.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate({
+        path: 'quiz',
+        select: 'title difficulty subject',
+        populate: {
+          path: 'subject',
+          select: 'name color'
+        }
+      });
+    
+    // Count total attempts
+    const totalAttempts = await QuizAttempt.countDocuments({ user: userId });
+    
+    // Format the response
+    const formattedAttempts = attempts.map(attempt => ({
+      id: attempt._id,
+      quizId: attempt.quiz._id,
+      quizTitle: attempt.quiz.title,
+      subject: attempt.quiz.subject.name,
+      subjectColor: attempt.quiz.subject.color,
+      difficulty: attempt.quiz.difficulty,
+      score: attempt.percentageScore,
+      passed: attempt.passed,
+      timeTaken: attempt.timeTaken, // In seconds
+      date: attempt.createdAt
+    }));
+    
+    res.status(200).json({
+      status: 'success',
+      results: formattedAttempts.length,
+      totalResults: totalAttempts,
+      totalPages: Math.ceil(totalAttempts / limit),
+      currentPage: page,
+      data: {
+        attempts: formattedAttempts
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user quiz attempts:', error);
+    next(error);
+  }
+};
+
+// Helper function for average score (for demo purposes)
 function calculateAverageScore(quiz) {
-  // In a real app, fetch actual average from attempts data or calculate based on quiz stats
-  // This is just a placeholder based on difficulty
   switch (quiz.difficulty) {
     case 'easy': return Math.floor(Math.random() * 15) + 75; // 75-90
     case 'medium': return Math.floor(Math.random() * 20) + 65; // 65-85

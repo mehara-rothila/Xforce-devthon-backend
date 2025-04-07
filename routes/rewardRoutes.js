@@ -1,30 +1,42 @@
-// Reward routes 
 const express = require('express');
+const rewardController = require('../controllers/rewardController');
+const { protect, restrictTo } = require('../middleware/auth'); // Import auth middleware
+
 const router = express.Router();
-// const rewardController = require('../controllers/rewardController'); // Uncomment when controller is implemented
 
-// @route   GET /api/rewards
-// @desc    Get all rewards with optional filters
-// @access  Public
-router.get('/', (req, res) => {
-  res.status(200).json({ message: 'Get all rewards' });
-  // Will be replaced with: rewardController.getAllRewards
-});
+// --- Public Routes ---
+// Anyone can view the list of available rewards and details of a single reward
+router.get('/', rewardController.getAllRewards);
+router.get('/:id', rewardController.getRewardById);
 
-// @route   POST /api/rewards/:id/redeem
-// @desc    Redeem a reward
-// @access  Private
-router.post('/:id/redeem', (req, res) => {
-  res.status(200).json({ message: `Redeem reward with ID: ${req.params.id}` });
-  // Will be replaced with: rewardController.redeemReward
-});
+// --- Protected Routes (Require User Login) ---
+// Apply 'protect' middleware to all subsequent routes in this file
+router.use(protect);
 
-// @route   GET /api/rewards/user/:id
-// @desc    Get user's redeemed rewards
-// @access  Private
-router.get('/user/:id', (req, res) => {
-  res.status(200).json({ message: `Get rewards for user ID: ${req.params.id}` });
-  // Will be replaced with: rewardController.getUserRewards
-});
+// Logged-in users can attempt to redeem a reward
+router.post('/:id/redeem', rewardController.redeemReward);
+
+// --- Admin Routes (Require Admin Role) ---
+// Apply 'restrictTo' middleware for admin-only actions
+// These routes are chained after the 'protect' middleware above
+
+router.post(
+    '/',
+    restrictTo('admin'), // Only admins can create rewards
+    rewardController.createReward
+);
+
+router.patch(
+    '/:id',
+    restrictTo('admin'), // Only admins can update rewards
+    rewardController.updateReward
+);
+
+router.delete(
+    '/:id',
+    restrictTo('admin'), // Only admins can delete rewards
+    rewardController.deleteReward
+);
+
 
 module.exports = router;
