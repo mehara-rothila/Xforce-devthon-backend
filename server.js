@@ -33,37 +33,56 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // --- Apply middleware ---
 
-app.use(helmet()); // Security headers
-// Consider helmet contentSecurityPolicy configuration if needed later
-// Example: app.use(helmet.contentSecurityPolicy({ directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'", 'trusted-cdn.com'] } }));
+// Modify helmet configuration to allow cross-origin requests
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 app.use(morgan('dev')); // Logging
 
-// --- START CORS Configuration ---
+// --- IMPROVED CORS Configuration ---
 // List all domains allowed to make requests
 const allowedOrigins = [
-  'https://xforce1.netlify.app', // <-- Your actual Netlify URL
-  'http://localhost:3000',       // Optional: Allow local dev frontend
-  // Add any other frontend domains that need access (e.g., custom domain later)
+  'https://xforce1.netlify.app',
+  'http://xforce1.netlify.app',
+  'https://xforce-devthon.netlify.app',
+  'http://xforce-devthon.netlify.app',
+  'http://localhost:3000'
 ];
 
+// Configure CORS with more permissive settings
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) - uncomment if needed
-    // if (!origin) return callback(null, true);
-
-    // Allow if origin is in the allowedOrigins list or for requests with no origin (like Postman)
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check if origin matches or starts with any allowed origin
+    const isAllowed = allowedOrigins.some(allowedOrigin => 
+      origin === allowedOrigin || origin.startsWith(allowedOrigin)
+    );
+    
+    if (isAllowed) {
       callback(null, true);
     } else {
-      console.error(`CORS Error: Origin ${origin} not allowed.`); // Log denied origins
-      callback(new Error('Not allowed by CORS'));
+      console.error(`CORS Error: Origin ${origin} not allowed.`);
+      // Still allow the request to go through, but log the error
+      // This is more permissive and may help during development
+      callback(null, true);
+      // To enforce strict CORS, use this instead:
+      // callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true // Important if your frontend needs to send/receive cookies or authorization headers
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
-// --- END CORS Configuration ---
 
+// Add a CORS preflight handler
+app.options('*', cors());
+
+// --- END CORS Configuration ---
 
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
@@ -119,7 +138,6 @@ app.use((err, req, res, next) => {
     next();
   }
 });
-
 
 // General error handling middleware (Keep this last)
 app.use(errorHandler);

@@ -4,14 +4,13 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci --only=production
 
 # Copy app source
 COPY . .
 
-# Expose the port
+# Set port to match fly.toml
+ENV PORT=3000
 EXPOSE 3000
 
 # Start the app
