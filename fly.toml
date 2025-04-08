@@ -1,15 +1,8 @@
-app = "xforce-backend"  # Choose your desired backend app name
-primary_region = "iad"  # Change to your preferred region
+app = "xforce-devthon-backend"
+primary_region = "iad"
 
 [build]
-  # Use Node.js builder
-  builder = "heroku/buildpacks:20"
-
-[env]
-  PORT = "3000"
-  NODE_ENV = "production"
-  # Add your other environment variables here (without sensitive values)
-  # MONGODB_URI = ""  # Set this using fly secrets set command
+  dockerfile = "Dockerfile"
 
 [http_service]
   internal_port = 3000
@@ -17,9 +10,3 @@ primary_region = "iad"  # Change to your preferred region
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
-
-[[vm]]
-  memory = "512mb"  # Start with less for a backend API
-  cpu_kind = "shared"
-  cpus = 1
