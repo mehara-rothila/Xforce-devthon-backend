@@ -31,40 +31,12 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected successfully'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// --- Apply middleware ---
-
+// Apply middleware
 app.use(helmet()); // Security headers
 // Consider helmet contentSecurityPolicy configuration if needed later
 // Example: app.use(helmet.contentSecurityPolicy({ directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'", 'trusted-cdn.com'] } }));
-
 app.use(morgan('dev')); // Logging
-
-// --- START CORS Configuration ---
-// List all domains allowed to make requests
-const allowedOrigins = [
-  'https://xforce1.netlify.app', // <-- Your actual Netlify URL
-  'http://localhost:3000',       // Optional: Allow local dev frontend
-  // Add any other frontend domains that need access (e.g., custom domain later)
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) - uncomment if needed
-    // if (!origin) return callback(null, true);
-
-    // Allow if origin is in the allowedOrigins list or for requests with no origin (like Postman)
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.error(`CORS Error: Origin ${origin} not allowed.`); // Log denied origins
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true // Important if your frontend needs to send/receive cookies or authorization headers
-}));
-// --- END CORS Configuration ---
-
-
+app.use(cors()); // Enable CORS - configure origins for production
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
@@ -97,17 +69,17 @@ app.use((err, req, res, next) => {
     console.error('Multer Error:', err);
     let message = 'File upload error.';
     if (err.code === 'LIMIT_FILE_SIZE') {
-      // Ideally, get the limit dynamically if possible, otherwise hardcode or use env var
-      message = `File is too large. Maximum size allowed.`;
+      // Use the limit defined in uploadRoutes.js (e.g., 20MB)
+      message = `File is too large. Maximum size is 20MB.`;
     } else if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-        message = 'Unexpected file field.';
+       message = 'Unexpected file field.';
     }
     return res.status(400).json({ status: 'fail', message });
   } else if (err) {
     // Handle custom errors (like wrong file type from fileFilter)
-      if (err.message === 'Not a PDF file!' || err.message === 'Invalid file type') { // Added generic invalid type
-        return res.status(400).json({ status: 'fail', message: err.message });
-      }
+     if (err.message === 'Not a PDF file!') {
+         return res.status(400).json({ status: 'fail', message: err.message });
+     }
     // Handle other non-multer errors that might occur during upload processing
     console.error('Unknown Upload Related Error:', err);
     // Pass to the general error handler if it's not an upload-specific error we handle here
@@ -115,8 +87,8 @@ app.use((err, req, res, next) => {
     // return res.status(500).json({ status: 'error', message: 'Internal server error during file processing.' });
     next(err); // Pass to general error handler for other errors
   } else {
-    // Everything went fine.
-    next();
+     // Everything went fine.
+     next();
   }
 });
 
