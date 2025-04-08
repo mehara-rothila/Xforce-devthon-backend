@@ -1,5 +1,3 @@
-FROM node:18-alpine # Base image
-
 WORKDIR /app # Set working directory
 
 # Copy package files FIRST
