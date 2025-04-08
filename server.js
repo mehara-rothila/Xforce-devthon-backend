@@ -92,7 +92,7 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 // Files in 'public/resources' will be available at '/resources/filename.pdf'
 app.use(express.static(path.join(__dirname, 'public'))); // <-- Add static serving
 
-// Define API routes
+// Define API routes WITH /api prefix (for standard API access)
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/subjects', subjectRoutes);
@@ -100,7 +100,17 @@ app.use('/api/forum', forumRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/rewards', rewardRoutes);
-app.use('/api/uploads', uploadRoutes); // <-- Mount the upload router
+app.use('/api/uploads', uploadRoutes);
+
+// DUPLICATE routes WITHOUT /api prefix (for direct access - backward compatibility)
+app.use('/auth', authRoutes);
+app.use('/users', userRoutes);
+app.use('/subjects', subjectRoutes);
+app.use('/forum', forumRoutes);
+app.use('/quizzes', quizRoutes);
+app.use('/resources', resourceRoutes);
+app.use('/rewards', rewardRoutes);
+app.use('/uploads', uploadRoutes);
 
 // Root route
 app.get('/', (req, res) => {
