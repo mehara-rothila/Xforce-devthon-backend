@@ -1,4 +1,4 @@
-console.log("--- SERVER STARTING - VERSION WITH MORGAN FIX + REQUIRE LOGS ---"); // <-- Updated marker
+console.log("--- SERVER STARTING - ISOLATION TEST 1 ---"); // <-- Test marker
 
 const express = require('express');
 console.log("Loaded express");
@@ -8,7 +8,7 @@ const cors = require('cors');
 console.log("Loaded cors");
 const helmet = require('helmet');
 console.log("Loaded helmet");
-const morgan = require('morgan'); // <-- Ensure this is require('morgan')
+const morgan = require('morgan');
 console.log("Loaded morgan");
 const dotenv = require('dotenv');
 console.log("Loaded dotenv");
@@ -19,34 +19,22 @@ console.log("Loaded path");
 const multer = require('multer');
 console.log("Loaded multer");
 
-// --- Check if MONGODB_URI is loaded ---
-// console.log(`[Server Startup] MONGODB_URI loaded: ${process.env.MONGODB_URI ? 'Yes, length ' + process.env.MONGODB_URI.length : 'NO - UNDEFINED'}`);
+// --- Import routes (COMMENTED OUT FOR ISOLATION TEST 1) ---
+console.log("Skipping route loading for isolation test...");
+// const authRoutes = require('./routes/authRoutes');
+// const userRoutes = require('./routes/userRoutes');
+// const subjectRoutes = require('./routes/subjectRoutes');
+// const forumRoutes = require('./routes/forumRoutes');
+// const quizRoutes = require('./routes/quizRoutes');
+// const resourceRoutes = require('./routes/resourceRoutes');
+// const rewardRoutes = require('./routes/rewardRoutes');
+// const uploadRoutes = require('./routes/uploadRoutes');
+console.log("Finished skipping route loading.");
 
-// --- Import routes (Ensure paths and casings are correct!) ---
-console.log("Loading routes...");
-const authRoutes = require('./routes/authRoutes');
-console.log("Loaded authRoutes");
-const userRoutes = require('./routes/userRoutes');
-console.log("Loaded userRoutes");
-const subjectRoutes = require('./routes/subjectRoutes');
-console.log("Loaded subjectRoutes");
-const forumRoutes = require('./routes/forumRoutes');
-console.log("Loaded forumRoutes");
-const quizRoutes = require('./routes/quizRoutes');
-console.log("Loaded quizRoutes");
-const resourceRoutes = require('./routes/resourceRoutes');
-console.log("Loaded resourceRoutes");
-const rewardRoutes = require('./routes/rewardRoutes');
-console.log("Loaded rewardRoutes");
-const uploadRoutes = require('./routes/uploadRoutes');
-console.log("Loaded uploadRoutes");
-console.log("Finished loading routes.");
-
-// --- Import middleware (Ensure path and casing are correct!) ---
-console.log("Loading middleware...");
-const errorHandler = require('./middleware/errorHandler');
-console.log("Loaded errorHandler");
-console.log("Finished loading middleware.");
+// --- Import middleware (COMMENTED OUT FOR ISOLATION TEST 1) ---
+console.log("Skipping middleware loading for isolation test...");
+// const errorHandler = require('./middleware/errorHandler');
+console.log("Finished skipping middleware loading.");
 
 // --- Initialize Express app ---
 const app = express();
@@ -69,7 +57,7 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 console.log("Applying morgan middleware...");
-app.use(morgan('dev')); // <-- Uses the correctly required morgan variable
+app.use(morgan('dev'));
 console.log("Applying CORS middleware...");
 // --- CORS Configuration ---
 const allowedOrigins = [
@@ -104,24 +92,24 @@ console.log("Applying static file middleware...");
 app.use(express.static(path.join(__dirname, 'public')));
 console.log("Applied static file middleware.");
 
-// --- API Routes ---
-console.log("Applying API routes...");
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/subjects', subjectRoutes);
-app.use('/api/forum', forumRoutes);
-app.use('/api/quizzes', quizRoutes);
-app.use('/api/resources', resourceRoutes);
-app.use('/api/rewards', rewardRoutes);
-app.use('/api/uploads', uploadRoutes);
-console.log("Applied API routes.");
+// --- API Routes (COMMENTED OUT FOR ISOLATION TEST 1) ---
+console.log("Skipping API route application...");
+// app.use('/api/auth', authRoutes);
+// app.use('/api/users', userRoutes);
+// app.use('/api/subjects', subjectRoutes);
+// app.use('/api/forum', forumRoutes);
+// app.use('/api/quizzes', quizRoutes);
+// app.use('/api/resources', resourceRoutes);
+// app.use('/api/rewards', rewardRoutes);
+// app.use('/api/uploads', uploadRoutes);
+console.log("Finished skipping API route application.");
 
-// --- Root Route ---
+// --- Root Route (Still active for testing) ---
 app.get('/', (req, res) => {
   const dbState = mongoose.connection.readyState;
   const dbStatus = dbState === 1 ? 'Connected' : `State: ${dbState}`;
   console.log(`Serving root route. DB Status: ${dbStatus}`);
-  res.send(`Welcome to Xforce-devthon API. DB Status: ${dbStatus}`);
+  res.send(`Welcome to Xforce-devthon API (Isolation Test). DB Status: ${dbStatus}`);
 });
 
 // --- Multer Error Handling ---
@@ -141,16 +129,16 @@ app.use((err, req, res, next) => {
 });
 console.log("Applied Multer error handler.");
 
-// --- General Error Handling Middleware ---
-console.log("Applying general error handler...");
-app.use(errorHandler);
-console.log("Applied general error handler.");
+// --- General Error Handling Middleware (COMMENTED OUT FOR ISOLATION TEST 1) ---
+console.log("Skipping general error handler application...");
+// app.use(errorHandler);
+console.log("Finished skipping general error handler application.");
 
 // --- Start Server ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log("--- SERVER SUCCESSFULLY STARTED ---");
+  console.log("--- SERVER SUCCESSFULLY STARTED (ISOLATION TEST 1) ---"); // <-- Test marker
 });
 
 module.exports = app;
