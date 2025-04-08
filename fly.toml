@@ -23,6 +23,3 @@ primary_region = 'fra'
   cpus = 1
   memory_mb = 1024
 
-# Add this section
-[build]
-  builder = "paketobuildpacks/builder:base"
