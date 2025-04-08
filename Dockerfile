@@ -1,17 +1,19 @@
-FROM node:18-alpine
+FROM node:18-alpine # Base image
 
-WORKDIR /app
+WORKDIR /app # Set working directory
 
-# Copy package files
+# Copy package files FIRST
 COPY package*.json ./
-RUN npm ci --only=production
+# Install production dependencies using npm ci (clean install)
+RUN npm ci --only=production # This uses package-lock.json
 
-# Copy app source
+# Copy ALL application source code AFTER installing dependencies
 COPY . .
 
-# Set port to match fly.toml
+# Set environment variable for port
 ENV PORT=3000
+# Expose the port the app will run on
 EXPOSE 3000
 
-# Start the app
+# Command to start the application
 CMD ["node", "server.js"]
