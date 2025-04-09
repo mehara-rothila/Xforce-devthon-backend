@@ -15,6 +15,15 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     // Consider adding match: [/.+\@.+\..+/, 'Please fill a valid email address']
   },
+  // --- NEW FIELD ---
+  phoneNumber: {
+    type: String,
+    trim: true,
+    // Optional: Add validation later if needed (e.g., specific format)
+    // match: [/^\+?[0-9]{10,15}$/, 'Please fill a valid phone number']
+    // unique: true, // Consider if phone numbers MUST be unique
+  },
+  // ---------------
   password: {
     type: String,
     required: [true, 'Please provide a password'],
