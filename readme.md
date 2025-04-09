@@ -362,5 +362,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [XForce Devthon Frontend](https://github.com/mehara-rothila/Xforce-devthon) - The React frontend for this platform
 
 ---
-
-Developed with ❤️ by Mehara Rothila
