@@ -4,11 +4,12 @@ const Quiz = require('../models/quizModel');
 const Subject = require('../models/subjectModel');
 const QuizAttempt = require('../models/quizAttemptModel');
 const User = require('../models/userModel');
+const achievementController = require('./achievementController');
 
 /**
- * @desc    Get all quizzes with filtering, sorting, pagination, and total count
- * @route   GET /api/quizzes
- * @access  Public
+ * @desc     Get all quizzes with filtering, sorting, pagination, and total count
+ * @route    GET /api/quizzes
+ * @access   Public
  */
 exports.getAllQuizzes = async (req, res, next) => {
   try {
@@ -19,42 +20,35 @@ exports.getAllQuizzes = async (req, res, next) => {
 
     // Add specific filters based on query parameters
     // Example: Filter by difficulty
-    if (req.query.difficulty) {
+    if (req.query.difficulty && req.query.difficulty !== 'all') { // Handle 'all' filter
         queryObj.difficulty = req.query.difficulty;
+    } else {
+        delete queryObj.difficulty; // Remove if 'all' or not provided
     }
 
     // --- CORRECTED Published Status Filter ---
-    // Default to published=true only if the parameter is completely missing
-    if (req.query.isPublished === undefined) {
-        console.log("isPublished not provided, defaulting to true.");
-        queryObj.isPublished = true;
-    } else if (req.query.isPublished === 'false') {
-        console.log("isPublished is 'false', fetching unpublished.");
-        queryObj.isPublished = false; // Explicitly fetch only unpublished
-    } else if (req.query.isPublished === 'true') {
-        console.log("isPublished is 'true', fetching published.");
-        queryObj.isPublished = true; // Explicitly fetch only published
+    // Default to published=true only if the parameter is completely missing or explicitly 'true'
+    if (req.query.isPublished === 'false') {
+      console.log("isPublished is 'false', fetching unpublished.");
+      queryObj.isPublished = false; // Explicitly fetch only unpublished
     } else if (req.query.isPublished === 'all') {
-        // If 'all', remove the isPublished property from the query object
-        // so it doesn't filter by published status at all.
-        console.log("isPublished is 'all', removing filter.");
-        delete queryObj.isPublished;
+      // If 'all', remove the isPublished property from the query object
+      console.log("isPublished is 'all', removing filter.");
+      delete queryObj.isPublished;
     } else {
-        // Optional: Handle invalid isPublished values, or default to published
-        // For safety, let's default to published if an unknown value is passed
-        console.warn(`Invalid isPublished value received: ${req.query.isPublished}. Defaulting to true.`);
+        // Default to published=true (if undefined, 'true', or any other value)
+        console.log(`isPublished is '${req.query.isPublished}', defaulting to true.`);
         queryObj.isPublished = true;
     }
     // --- End CORRECTED Filter ---
 
-
-    // Handle text search (if needed, add search logic similar to resources)
+    // Handle text search
     if (req.query.search) {
       queryObj.title = { $regex: req.query.search, $options: 'i' };
     }
 
     // --- Handle Subject Filter (Single or Multiple) ---
-    if (req.query.subject) {
+    if (req.query.subject && req.query.subject !== 'all') { // Handle 'all' filter
         const subjectIds = req.query.subject.split(',') // Split by comma
             .map(id => id.trim()) // Remove whitespace
             .filter(id => mongoose.Types.ObjectId.isValid(id)); // Keep only valid ObjectIds
@@ -65,8 +59,10 @@ exports.getAllQuizzes = async (req, res, next) => {
         } else {
              console.warn("Quiz subject filter provided but contained no valid ObjectIds:", req.query.subject);
              // Match nothing if filter is present but invalid
-             queryObj._id = null; // Or handle as needed: maybe return empty results immediately?
+             queryObj._id = new mongoose.Types.ObjectId(); // Generate a non-existent ID to return 0 results
         }
+    } else {
+        delete queryObj.subject; // Remove if 'all' or not provided
     }
     // --- End Subject Filter ---
 
@@ -91,11 +87,11 @@ exports.getAllQuizzes = async (req, res, next) => {
 
     // --- Field Limiting ---
      if (req.query.fields) {
-      const fields = req.query.fields.split(',').join(' ');
-      query = query.select(fields);
-    } else {
-      query = query.select('-__v'); // Exclude __v by default
-    }
+       const fields = req.query.fields.split(',').join(' ');
+       query = query.select(fields);
+     } else {
+       query = query.select('-__v'); // Exclude __v by default
+     }
 
 
     // --- Pagination ---
@@ -111,7 +107,7 @@ exports.getAllQuizzes = async (req, res, next) => {
     query = query.populate({
       path: 'subject',
       select: 'name color icon' // Select fields you need from Subject
-    });
+    }).lean({ virtuals: true }); // Include virtuals like totalQuestions
 
     // Execute query
     const quizzes = await query;
@@ -139,16 +135,19 @@ exports.getAllQuizzes = async (req, res, next) => {
 };
 
 /**
- * @desc    Get quiz by ID
- * @route   GET /api/quizzes/:id
- * @access  Public
+ * @desc     Get quiz by ID
+ * @route    GET /api/quizzes/:id
+ * @access   Public
  */
 exports.getQuizById = async (req, res, next) => {
   try {
-    const quiz = await Quiz.findById(req.params.id).populate({
-      path: 'subject',
-      select: 'name color icon'
-    }); 
+    // Populate subject and include virtuals for the detail view
+    const quiz = await Quiz.findById(req.params.id)
+        .populate({
+          path: 'subject',
+          select: 'name color icon'
+        })
+        .lean({ virtuals: true }); // Fetch virtuals like totalQuestions, totalPoints
 
     if (!quiz) {
       return res.status(404).json({
@@ -170,9 +169,9 @@ exports.getQuizById = async (req, res, next) => {
 };
 
 /**
- * @desc    Create a new quiz
- * @route   POST /api/quizzes
- * @access  Private/Admin (Apply middleware in routes)
+ * @desc     Create a new quiz
+ * @route    POST /api/quizzes
+ * @access   Private/Admin (Apply middleware in routes)
  */
 exports.createQuiz = async (req, res, next) => {
   try {
@@ -183,7 +182,7 @@ exports.createQuiz = async (req, res, next) => {
      if (!req.body.title) {
          return res.status(400).json({ status: 'fail', message: 'Quiz title is required.' });
      }
-     // Add more validation as needed (e.g., questions array)
+     // Add more validation as needed (e.g., questions array non-empty?)
 
     // Validate that subject exists
     const subject = await Subject.findById(req.body.subject);
@@ -191,33 +190,14 @@ exports.createQuiz = async (req, res, next) => {
       return res.status(404).json({ status: 'fail', message: 'Subject not found' });
     }
 
-    // Create quiz
+    // Prepare quiz data
     const newQuizData = {
       ...req.body,
-      createdBy: req.user ? req.user.id : undefined // Get user from auth middleware if available
+      createdBy: req.user?._id // Get user from auth middleware (ensure protect middleware runs)
     };
 
-    // Ensure options within questions have IDs if they are missing (though model should handle this if not disabled)
-    if (newQuizData.questions && Array.isArray(newQuizData.questions)) {
-        newQuizData.questions.forEach(q => {
-            if (q.options && Array.isArray(q.options)) {
-                q.options.forEach(opt => {
-                    if (!opt._id) {
-                        opt._id = new mongoose.Types.ObjectId(); // Assign new ID if missing
-                    }
-                });
-                // Ensure correctAnswer points to a valid option _id within the question
-                const correctOption = q.options.find(opt => opt.isCorrect);
-                if (correctOption && correctOption._id) {
-                    q.correctAnswer = correctOption._id.toString();
-                } else {
-                    // Handle cases where no correct answer is marked or options are missing IDs
-                    console.warn(`Question "${q.text}" might be missing a correct answer or option IDs.`);
-                    q.correctAnswer = null; // Or handle as appropriate
-                }
-            }
-        });
-    }
+    // Note: The pre-save hook in quizModel.js will handle setting correctAnswer based on isCorrect flag
+    // and ensuring option IDs exist before the actual save.
 
     const newQuiz = await Quiz.create(newQuizData);
 
@@ -231,47 +211,33 @@ exports.createQuiz = async (req, res, next) => {
     console.error('Error creating quiz:', error);
      if (error.name === 'ValidationError') {
          return res.status(400).json({ status: 'fail', message: error.message });
-    }
+     }
     next(error); // Pass other errors
   }
 };
 
 /**
- * @desc    Update a quiz
- * @route   PATCH /api/quizzes/:id
- * @access  Private/Admin (Apply middleware in routes)
+ * @desc     Update a quiz
+ * @route    PATCH /api/quizzes/:id
+ * @access   Private/Admin (Apply middleware in routes)
  */
 exports.updateQuiz = async (req, res, next) => {
   try {
     const updateData = { ...req.body };
 
-    // Ensure options within questions have IDs if they are missing
-    // And update correctAnswer based on isCorrect flag
-    if (updateData.questions && Array.isArray(updateData.questions)) {
-        updateData.questions.forEach(q => {
-            if (q.options && Array.isArray(q.options)) {
-                let foundCorrectAnswerId = null;
-                q.options.forEach(opt => {
-                    // Ensure option has an ID, generate if missing (important for updates)
-                    if (!opt._id) {
-                        opt._id = new mongoose.Types.ObjectId();
-                    }
-                    if (opt.isCorrect) {
-                        foundCorrectAnswerId = opt._id.toString();
-                    }
-                });
-                 // Update the question's correctAnswer field
-                q.correctAnswer = foundCorrectAnswerId;
-            } else {
-                 q.correctAnswer = null; // No options, no correct answer
-            }
-        });
-    }
+    // Prevent direct update of certain fields if necessary
+    // delete updateData.attempts;
+    // delete updateData.createdBy;
+    // delete updateData.rating; // Rating might be calculated elsewhere
+
+    // Note: The pre-save hook in quizModel.js will handle updating correctAnswer
+    // based on isCorrect flags if the 'questions' array is modified during the update.
+    // Mongoose handles subdocument ID generation automatically.
 
     const quiz = await Quiz.findByIdAndUpdate(
       req.params.id,
-      updateData, // Use the potentially modified updateData
-      { new: true, runValidators: true }
+      updateData, // Pass the update data
+      { new: true, runValidators: true } // Return updated doc, run schema validators
     );
 
     if (!quiz) {
@@ -288,15 +254,15 @@ exports.updateQuiz = async (req, res, next) => {
     console.error('Error updating quiz:', error);
      if (error.name === 'ValidationError') {
          return res.status(400).json({ status: 'fail', message: error.message });
-    }
+     }
     next(error); // Pass other errors
   }
 };
 
 /**
- * @desc    Delete a quiz
- * @route   DELETE /api/quizzes/:id
- * @access  Private/Admin (Apply middleware in routes)
+ * @desc     Delete a quiz
+ * @route    DELETE /api/quizzes/:id
+ * @access   Private/Admin (Apply middleware in routes)
  */
 exports.deleteQuiz = async (req, res, next) => {
   try {
@@ -307,9 +273,10 @@ exports.deleteQuiz = async (req, res, next) => {
     }
 
     // Delete all associated quiz attempts
-    await QuizAttempt.deleteMany({ quiz: req.params.id });
+    const deleteResult = await QuizAttempt.deleteMany({ quiz: req.params.id });
+    console.log(`Deleted ${deleteResult.deletedCount} associated quiz attempts for quiz ${req.params.id}`);
 
-    res.status(204).json({ status: 'success', data: null });
+    res.status(204).json({ status: 'success', data: null }); // 204 No Content
   } catch (error) {
     console.error('Error deleting quiz:', error);
     next(error); // Pass error to handler
@@ -317,17 +284,19 @@ exports.deleteQuiz = async (req, res, next) => {
 };
 
 /**
- * @desc    Submit a quiz attempt
- * @route   POST /api/quizzes/:id/attempts
- * @access  Private (Apply middleware in routes)
+ * @desc     Submit a quiz attempt
+ * @route    POST /api/quizzes/:id/attempts
+ * @access   Private (Apply middleware in routes)
  */
 exports.submitQuizAttempt = async (req, res, next) => {
   try {
     console.log('Request body:', JSON.stringify(req.body, null, 2));
     console.log('Request params:', JSON.stringify(req.params, null, 2));
-    console.log('Request user:', req.user);
-    
-    const quiz = await Quiz.findById(req.params.id);
+    console.log('Request user:', req.user); // Ensure protect middleware provides req.user
+
+    const quizId = req.params.id;
+    // Populate subject details needed for points/XP calculation
+    const quiz = await Quiz.findById(quizId).populate('subject').lean({ virtuals: true }); // Fetch virtuals like totalPoints
     if (!quiz) {
       return res.status(404).json({ status: 'fail', message: 'Quiz not found' });
     }
@@ -340,138 +309,227 @@ exports.submitQuizAttempt = async (req, res, next) => {
 
     // --- Score Calculation Logic ---
     let score = 0;
-    let totalPoints = 0;
-    
+    // Use totalPoints from the fetched quiz virtual property if available, otherwise calculate
+    let totalPoints = quiz.totalPoints || 0; // Get pre-calculated total points
+    let correctCount = 0;
+    let questionsInAttempt = 0; // Count questions actually submitted
+
+    // Calculate totalPoints manually if not available from virtuals (fallback)
+    if (totalPoints === 0) {
+        console.warn("Quiz totalPoints virtual not available, calculating manually.");
+        totalPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 0), 0);
+    }
+
     // Process answers
     const processedAnswers = answers.map(answer => {
+        // Find the corresponding question in the fetched quiz data
       const question = quiz.questions.find(q => q._id.toString() === answer.questionId);
-      if (!question) return { ...answer, isCorrect: false };
-      
-      const questionPoints = question.points || 1;
-      totalPoints += questionPoints;
-      
+      if (!question) {
+          console.warn(`Question ID ${answer.questionId} from submission not found in quiz ${quizId}. Skipping.`);
+          return null; // Skip if question not found in current quiz version
+      }
+
+      questionsInAttempt++;
+      const questionPoints = question.points || 0; // Use actual points from question
+
       let isCorrect = false;
+      // Check if the submitted answerId matches the correct answer ID stored in the question
       if (question.correctAnswer && answer.answerId === question.correctAnswer.toString()) {
         score += questionPoints;
+        correctCount += 1;
         isCorrect = true;
       }
-      
+
       return {
         questionId: answer.questionId,
         answerId: answer.answerId,
         isCorrect
       };
-    });
+    }).filter(a => a !== null); // Filter out any skipped questions
 
+    // Calculate percentage score based on the total points of the QUIZ, not just answered questions
     const percentageScore = totalPoints > 0 ? Math.round((score / totalPoints) * 100) : 0;
-    const passed = percentageScore >= (quiz.passScore || 0);
+    const passScore = quiz.passScore || 70; // Use quiz pass score or default
+    const passed = percentageScore >= passScore;
 
-    // Update quiz attempts count
-    quiz.attempts = (quiz.attempts || 0) + 1;
-    await quiz.save({ validateBeforeSave: false });
+    // --- Update quiz attempts count --- (Optional: Can be done here or via aggregation later)
+    await Quiz.findByIdAndUpdate(quizId, { $inc: { attempts: 1 } });
 
-    // Save the attempt details to QuizAttempt collection if user is authenticated
+    // --- POINTS SYSTEM CALCULATION ---
+    const calculatePointsAwarded = () => {
+      const difficultyMultiplier = { 'easy': 1, 'medium': 1.5, 'hard': 2.5 }[quiz.difficulty] || 1;
+      const basePoints = 10;
+      const questionCountFactor = Math.min(2, Math.log10(quiz.questions.length + 1) + 0.5); // Based on total questions in quiz
+      const perfectScoreBonus = percentageScore === 100 ? 1.2 : 1;
+      let timeBonus = 1;
+      if (timeTaken && quiz.timeLimit && quiz.timeLimit > 0) { // Ensure timeLimit is positive
+        const timePercentage = timeTaken / (quiz.timeLimit * 60);
+        if (timePercentage < 0.5) { timeBonus = 1.1; } // Bonus for finishing fast
+      }
+      const rawPoints = basePoints * difficultyMultiplier * (percentageScore / 100) * questionCountFactor * perfectScoreBonus * timeBonus;
+      return Math.max(1, Math.round(rawPoints)); // Minimum 1 point
+    };
+    const pointsAwarded = calculatePointsAwarded();
+    console.log(`Points awarded for quiz completion: ${pointsAwarded}`);
+
+    // --- XP CALCULATION ---
+    const xpMultiplier = { 'easy': 1, 'medium': 1.5, 'hard': 2 }[quiz.difficulty] || 1;
+    const xpAwarded = Math.floor(percentageScore * 0.5 * xpMultiplier); // Example XP calculation
+    console.log(`XP awarded for quiz completion: ${xpAwarded}`);
+
+    // --- Save attempt and Update User Stats (if authenticated) ---
     let attemptId = null;
-    
-    // For testing - handle anonymous submissions
+    let achievementResults = { awarded: [] };
+
+    // Check if user is authenticated
     if (req.user && req.user.id) {
+      const userId = req.user.id;
       try {
+        // 1. Save quiz attempt
         const attempt = await QuizAttempt.create({
-          user: req.user.id,
+          user: userId,
           quiz: quiz._id,
           answers: processedAnswers,
           score: score,
-          totalPoints: totalPoints,
+          totalPoints: totalPoints, // Store total possible points at time of attempt
           percentageScore: percentageScore,
           passed: passed,
-          timeTaken: timeTaken || null
+          timeTaken: timeTaken || null,
+          pointsAwarded: pointsAwarded // Store points awarded for this specific attempt
         });
         attemptId = attempt._id;
-        
-        // Award XP for registered users
-        if (passed) {
-          try {
-            // Award XP to the user based on quiz difficulty and score
-            const xpGained = Math.floor(percentageScore * 0.5); // Simple XP calculation
-            
-            // Update user XP
-            const user = await User.findById(req.user.id);
-            if (user) {
-              user.xp += xpGained;
-              
-              // Check for level up - simple level formula
-              const oldLevel = user.level;
-              const newLevel = Math.floor(1 + Math.sqrt(user.xp / 100));
-              
-              if (newLevel > oldLevel) {
-                user.level = newLevel;
-              }
-              
-              await user.save();
+        console.log(`Quiz attempt ${attemptId} saved for user ${userId}`);
+
+        // ************ START FIX: Update user's aggregate stats ************
+        // 2. Update user's aggregate stats and level-related fields
+        const userUpdate = await User.findByIdAndUpdate(
+          userId,
+          {
+            $inc: {
+              xp: xpAwarded,                   // Increment XP
+              points: pointsAwarded,            // Increment total points
+              quizCompletedCount: 1,            // Increment completed count by 1
+              quizTotalPercentageScoreSum: percentageScore // Add this attempt's score % to the sum
             }
-          } catch (xpError) {
-            console.error('Error updating user XP:', xpError);
-            // Continue even if XP update fails
-          }
+            // We could potentially set lastActive here too: $set: { lastActive: new Date() }
+          },
+          { new: true } // Return the updated user document to check for level up
+        );
+        // ************ END FIX ************
+
+        if (!userUpdate) {
+           console.warn(`[submitQuizAttempt] User ${userId} not found during update. Stats not updated.`);
+           // Consider if this should be a bigger error
+        } else {
+            console.log(`User ${userId} stats updated: XP=${userUpdate.xp}, Points=${userUpdate.points}, Completed=${userUpdate.quizCompletedCount}`);
+            // 3. Check for level up based on the updated XP
+            const oldLevel = userUpdate.level; // Level before this update might be different if fetched fresh
+            // Use a consistent level formula (ensure this matches dashboard/other areas)
+            const newLevel = Math.floor(1 + Math.sqrt(userUpdate.xp / 100)); // Example formula
+
+            if (newLevel > oldLevel) {
+              // Update the user's level if it increased
+              await User.findByIdAndUpdate(userId, { level: newLevel });
+              console.log(`User ${userId} leveled up from ${oldLevel} to level ${newLevel}!`);
+              // TODO: Trigger level-up achievements if applicable
+            }
+
+            // 4. Check for quiz-related achievements
+            achievementResults = await achievementController.checkQuizAchievements(userId, {
+              percentageScore,
+              passed,
+              difficulty: quiz.difficulty,
+              quizId: quiz._id.toString(),
+              subject: quiz.subject?._id?.toString() || null // Safely access subject ID
+            });
+             console.log(`Checked achievements for user ${userId}. Awarded: ${achievementResults.awarded.length}`);
         }
-      } catch (attemptError) {
-        console.error('Error saving quiz attempt:', attemptError);
-        // Continue even if saving the attempt fails - we'll still return the score
+
+      } catch (error) {
+        console.error(`Error processing authenticated quiz attempt for user ${userId}:`, error);
+        // Decide on error handling: Should we rollback attempt save? For now, log and continue.
+        // The response will still contain score details, but DB update might have failed.
       }
     } else {
       console.log('Quiz submitted anonymously (no user authentication)');
+      // Handle anonymous attempts if needed (e.g., store in session, but not in DB permanently)
     }
 
-    // Return the results regardless of whether we saved the attempt
+    // --- Prepare and Send Response ---
+    const responseData = {
+        attemptId, // ID of the saved attempt (null if anonymous)
+        score,
+        totalPoints,
+        percentageScore,
+        passed,
+        correctAnswers: correctCount,
+        totalQuestions: quiz.questions.length, // Total questions in the quiz
+        pointsAwarded, // Points awarded for *this* attempt
+        xpAwarded,     // XP awarded for *this* attempt
+        achievements: achievementResults.awarded // Achievements unlocked by *this* attempt
+      };
+
+    console.log("Sending quiz submission response:", responseData);
     res.status(200).json({
       status: 'success',
       message: 'Quiz attempt submitted successfully.',
-      data: { 
-        attemptId,
-        score, 
-        totalPoints, 
-        percentageScore, 
-        passed 
-      }
+      data: responseData
     });
+
   } catch (error) {
-    console.error('Error submitting quiz attempt:', error);
-    res.status(500).json({ 
-      status: 'error', 
-      message: 'Error processing quiz attempt: ' + (error.message || 'Unknown error')
-    });
+    console.error('Outer error submitting quiz attempt:', error);
+    // Ensure error is passed to the central handler if headers not sent
+    if (!res.headersSent) {
+        next(error); // Pass to the default error handler
+    }
   }
 };
 
+
 /**
- * @desc    Get quizzes for a specific subject
- * @route   GET /api/subjects/:id/quizzes (Note: This route might be defined in subjectRoutes.js)
- * @access  Public
+ * @desc     Get quizzes for a specific subject
+ * @route    GET /api/subjects/:id/quizzes (Note: Route definition likely in subjectRoutes.js)
+ * @access   Public
  */
 exports.getQuizzesForSubject = async (req, res, next) => {
   try {
-    const subjectId = req.params.id; // Assuming subject ID is passed as :id
+    const subjectId = req.params.id; // Assuming subject ID is passed as :id in the route
     if (!mongoose.Types.ObjectId.isValid(subjectId)) {
         return res.status(400).json({ status: 'fail', message: 'Invalid Subject ID' });
     }
+
     // Optional: Check if subject exists
     // const subject = await Subject.findById(subjectId);
     // if (!subject) {
     //   return res.status(404).json({ status: 'fail', message: 'Subject not found' });
     // }
 
-    // Add filtering/pagination if needed from req.query
+    // Add filtering/pagination if needed from req.query, similar to getAllQuizzes
     const queryObj = { subject: subjectId, isPublished: true }; // Default to only published for this view
+
+    // Example: Apply difficulty filter if provided
+    if (req.query.difficulty && req.query.difficulty !== 'all') {
+       queryObj.difficulty = req.query.difficulty;
+    }
+
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10; // Default limit per page
+    const skip = (page - 1) * limit;
+
     const totalResults = await Quiz.countDocuments(queryObj);
     const quizzes = await Quiz.find(queryObj)
-                              .populate('subject', 'name color')
-                              .sort('-createdAt') // Example sort
-                              .limit(10); // Example limit
+                              .populate('subject', 'name color') // Populate relevant subject fields
+                              .sort(req.query.sort || '-createdAt') // Allow sorting, default to newest
+                              .skip(skip)
+                              .limit(limit)
+                              .lean({ virtuals: true }); // Include virtuals
 
     res.status(200).json({
       status: 'success',
       totalResults: totalResults,
       results: quizzes.length,
+      totalPages: Math.ceil(totalResults / limit),
+      currentPage: page,
       data: { quizzes }
     });
   } catch (error) {
@@ -481,55 +539,63 @@ exports.getQuizzesForSubject = async (req, res, next) => {
 };
 
 /**
- * @desc    Get practice quizzes for a subject (Example for subject detail page)
- * @route   GET /api/quizzes/subject/:subjectId/practice
- * @access  Public
+ * @desc     Get practice quizzes for a subject (Example for subject detail page)
+ * @route    GET /api/quizzes/subject/:subjectId/practice
+ * @access   Public
  */
 exports.getPracticeQuizzes = async (req, res, next) => {
   try {
     const subjectId = req.params.subjectId;
      if (!mongoose.Types.ObjectId.isValid(subjectId)) {
          return res.status(400).json({ status: 'fail', message: 'Invalid Subject ID' });
-    }
+     }
 
     const query = {
       subject: subjectId,
       isPublished: true // Only show published quizzes as practice
     };
 
-    // Apply topic filter if provided and valid
+    // Apply topic filter if provided and valid (Assuming a 'topic' field links to Topic ID)
     if (req.query.topic && mongoose.Types.ObjectId.isValid(req.query.topic)) {
-      query.topic = req.query.topic; // Assuming 'topic' field exists in Quiz model linking to a Topic ID
+      query.topic = req.query.topic;
     }
 
+    // Fetch quizzes, sorting, limiting, including virtuals
     const quizzes = await Quiz.find(query)
-      .sort({ attempts: -1 }) // Example sort: most attempted
-      .limit(6); // Limit to a few practice quizzes
+      .sort({ attempts: -1 }) // Example sort: most attempted first
+      .limit(6) // Limit to a few practice quizzes
+      .lean({ virtuals: true }); // Fetch virtuals like totalQuestions
 
     // Get user's previous attempts if authenticated
-    let userAttempts = [];
-    if (req.user && req.user._id) {
-      userAttempts = await QuizAttempt.find({ 
-        user: req.user._id,
-        quiz: { $in: quizzes.map(q => q._id) }
-      }).sort({ createdAt: -1 });
+    let userAttemptsMap = new Map(); // Use a Map for efficient lookup
+    if (req.user && req.user.id) { // Use req.user provided by auth middleware
+      const userAttemptDocs = await QuizAttempt.find({
+        user: req.user.id,
+        quiz: { $in: quizzes.map(q => q._id) } // Find attempts only for the fetched quizzes
+      }).sort({ createdAt: -1 }); // Sort by most recent attempt
+
+      // Populate the map, keeping only the latest attempt per quiz
+      userAttemptDocs.forEach(attempt => {
+          if (!userAttemptsMap.has(attempt.quiz.toString())) {
+              userAttemptsMap.set(attempt.quiz.toString(), attempt);
+          }
+      });
     }
 
-    // Format quizzes for practice display
+    // Format quizzes for practice display, including user attempt info
     const practiceQuizzes = quizzes.map(quiz => {
-      // Check if user has attempted this quiz
-      const userAttempt = userAttempts.find(a => a.quiz.toString() === quiz._id.toString());
-      
+      const userAttempt = userAttemptsMap.get(quiz._id.toString()); // Get latest attempt for this quiz
+
       return {
         id: quiz._id,
         title: quiz.title,
-        questions: quiz.questions?.length || 0,
+        questions: quiz.totalQuestions || 0, // Use virtual totalQuestions
         difficulty: quiz.difficulty,
         timeEstimate: quiz.timeLimit ? `${quiz.timeLimit} min` : 'N/A',
         attempts: quiz.attempts || 0,
-        userScore: userAttempt ? userAttempt.percentageScore : null,
-        userAttempted: !!userAttempt,
-        userPassed: userAttempt ? userAttempt.passed : false
+        userScore: userAttempt ? userAttempt.percentageScore : null, // Score from latest attempt
+        userAttempted: !!userAttempt, // Has the user attempted this quiz?
+        userPassed: userAttempt ? userAttempt.passed : null // Passed status from latest attempt (can be null if not attempted)
       };
     });
 
@@ -545,80 +611,97 @@ exports.getPracticeQuizzes = async (req, res, next) => {
 };
 
 /**
- * @desc    Get user's quiz attempts
- * @route   GET /api/quizzes/user/:userId/attempts
- * @access  Private
+ * @desc     Get user's quiz attempts
+ * @route    GET /api/quizzes/user/:userId/attempts
+ * @access   Private (Requires user ID match or admin role)
  */
 exports.getUserQuizAttempts = async (req, res, next) => {
   try {
     const { userId } = req.params;
-    
-    // Ensure user can only see their own attempts (unless admin)
-    if (req.user && req.user.id !== userId && req.user.role !== 'admin') {
+
+    // --- Authorization Check ---
+    // Ensure user is logged in and either accessing their own attempts or is an admin
+    if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
       return res.status(403).json({
         status: 'fail',
-        message: 'You do not have permission to access these records'
+        message: 'You do not have permission to access these records.'
       });
     }
-    
-    // Pagination
+    // --- End Authorization Check ---
+
+    // --- Validation ---
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
+    }
+    // Optional: Check if user actually exists
+    // const userExists = await User.findById(userId);
+    // if (!userExists) return res.status(404).json({ status: 'fail', message: 'User not found' });
+    // --- End Validation ---
+
+    // --- Pagination ---
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
+    const limit = parseInt(req.query.limit, 10) || 10; // Default items per page
     const skip = (page - 1) * limit;
-    
-    // Get attempts with populated quiz details
-    const attempts = await QuizAttempt.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate({
-        path: 'quiz',
-        select: 'title difficulty subject',
-        populate: {
+    // --- End Pagination ---
+
+    // --- Querying ---
+    // Find attempts for the specified user
+    const query = QuizAttempt.find({ user: userId });
+
+    // Sorting (default to most recent first)
+    query.sort(req.query.sort || { createdAt: -1 });
+
+    // Populate related data for richer response
+    query.populate({
+        path: 'quiz', // Populate the 'quiz' field in each attempt
+        select: 'title difficulty subject', // Select specific fields from the Quiz model
+        populate: { // Nested populate for the subject within the quiz
           path: 'subject',
-          select: 'name color'
+          select: 'name color' // Select specific fields from the Subject model
         }
       });
-    
-    // Count total attempts
-    const totalAttempts = await QuizAttempt.countDocuments({ user: userId });
-    
-    // Format the response
+
+    // Apply pagination
+    query.skip(skip).limit(limit);
+
+    // Execute query and count total documents matching the filter
+    const [attempts, totalAttempts] = await Promise.all([
+        query.lean(), // Use lean for performance if no Mongoose methods needed after fetch
+        QuizAttempt.countDocuments({ user: userId }) // Count total attempts for pagination info
+    ]);
+    // --- End Querying ---
+
+    // --- Formatting Response ---
     const formattedAttempts = attempts.map(attempt => ({
       id: attempt._id,
-      quizId: attempt.quiz._id,
-      quizTitle: attempt.quiz.title,
-      subject: attempt.quiz.subject.name,
-      subjectColor: attempt.quiz.subject.color,
-      difficulty: attempt.quiz.difficulty,
-      score: attempt.percentageScore,
+      quizId: attempt.quiz?._id, // Safely access populated data
+      quizTitle: attempt.quiz?.title || 'Quiz Deleted', // Handle if quiz was deleted
+      subject: attempt.quiz?.subject?.name || 'N/A',
+      subjectColor: attempt.quiz?.subject?.color || '#808080', // Default color
+      difficulty: attempt.quiz?.difficulty || 'N/A',
+      score: attempt.percentageScore, // The percentage score
       passed: attempt.passed,
-      timeTaken: attempt.timeTaken, // In seconds
-      date: attempt.createdAt
+      timeTaken: attempt.timeTaken, // In seconds (null if not recorded)
+      date: attempt.createdAt,      // Timestamp of the attempt
+      pointsAwarded: attempt.pointsAwarded || 0 // Points earned from this attempt
     }));
-    
+    // --- End Formatting Response ---
+
+    // --- Send JSON Response ---
     res.status(200).json({
       status: 'success',
-      results: formattedAttempts.length,
-      totalResults: totalAttempts,
+      results: formattedAttempts.length, // Number of results on the current page
+      totalResults: totalAttempts,       // Total number of attempts for the user
       totalPages: Math.ceil(totalAttempts / limit),
       currentPage: page,
       data: {
         attempts: formattedAttempts
       }
     });
+    // --- End Send JSON Response ---
+
   } catch (error) {
     console.error('Error fetching user quiz attempts:', error);
-    next(error);
+    next(error); // Pass error to the central handler
   }
 };
-
-// Helper function for average score (for demo purposes)
-function calculateAverageScore(quiz) {
-  switch (quiz.difficulty) {
-    case 'easy': return Math.floor(Math.random() * 15) + 75; // 75-90
-    case 'medium': return Math.floor(Math.random() * 20) + 65; // 65-85
-    case 'hard': return Math.floor(Math.random() * 20) + 55; // 55-75
-    default: return 70;
-  }
-}
