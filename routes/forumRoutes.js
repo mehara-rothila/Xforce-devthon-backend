@@ -3,8 +3,7 @@ const router = express.Router();
 const forumController = require('../controllers/forumController');
 // Assuming your auth middleware provides protect (authentication)
 // and restrictTo (authorization based on roles like 'admin')
-const { protect, restrictTo } = require('../middleware/auth');
-
+const { protect, restrictTo } = require('../middleware/authMiddleware');
 // --- Public Routes ---
 // Anyone can view categories, topics lists, and individual topics/replies
 router.get('/categories', forumController.getCategories);

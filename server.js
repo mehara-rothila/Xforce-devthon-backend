@@ -18,7 +18,8 @@ const forumRoutes = require('./routes/forumRoutes');
 const quizRoutes = require('./routes/quizRoutes');
 const resourceRoutes = require('./routes/resourceRoutes');
 const rewardRoutes = require('./routes/rewardRoutes');
-const uploadRoutes = require('./routes/uploadRoutes'); // <-- Import upload routes
+const uploadRoutes = require('./routes/uploadRoutes'); 
+const achievementRoutes = require('./routes/achievementRoutes'); // Import achievement routes
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -53,7 +54,8 @@ app.use('/api/forum', forumRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/rewards', rewardRoutes);
-app.use('/api/uploads', uploadRoutes); // <-- Mount the upload router
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/achievements', achievementRoutes); // Mount achievement routes
 
 // Root route
 app.get('/', (req, res) => {

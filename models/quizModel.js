@@ -1,7 +1,7 @@
-// Quiz model
+// models/quizModel.js
 const mongoose = require('mongoose');
 
-// Option Schema (for multiple choice questions)
+// Option Schema (CORRECTED - no _id: false)
 const optionSchema = new mongoose.Schema({
   text: {
     type: String,
@@ -11,7 +11,7 @@ const optionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   }
-}, { _id: false }); // <--- PROBLEM: This prevents options from getting unique IDs
+}); // Mongoose adds _id automatically
 
 // Question Schema
 const questionSchema = new mongoose.Schema({
@@ -19,9 +19,9 @@ const questionSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Question must have text']
   },
-  options: [optionSchema], // Array of options based on the schema above
+  options: [optionSchema],
   correctAnswer: {
-    // This should store the _id of the correct option IF options have IDs
+    // This will store the _id string of the correct option
     type: String
   },
   explanation: {
@@ -44,8 +44,7 @@ const questionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-   // Mongoose automatically adds _id to nested schemas unless disabled
-   // So questions *will* have an _id by default.
+  // Mongoose adds _id automatically
 });
 
 // Quiz Schema
@@ -64,11 +63,9 @@ const quizSchema = new mongoose.Schema({
     ref: 'Subject',
     required: [true, 'Quiz must belong to a subject']
   },
-  topic: { // Optional: Link to a specific topic within a subject
+  topic: {
     type: mongoose.Schema.ObjectId,
-    // If topics are embedded in Subject, referencing might be complex.
-    // Consider if Topic should be its own collection if you need direct refs often.
-    ref: 'Subject.topics' // This reference might not work as expected if topics are embedded.
+    ref: 'Subject.topics'
   },
   difficulty: {
     type: String,
@@ -79,7 +76,7 @@ const quizSchema = new mongoose.Schema({
     type: Number, // In minutes
     default: 30
   },
-  questions: [questionSchema], // Embed the questions
+  questions: [questionSchema],
   isPublished: {
     type: Boolean,
     default: false
@@ -92,37 +89,72 @@ const quizSchema = new mongoose.Schema({
     type: mongoose.Schema.ObjectId,
     ref: 'User'
   },
-  attempts: { // Number of times the quiz has been attempted
+  attempts: {
     type: Number,
     default: 0
   },
-  rating: { // Average user rating
+  rating: {
     type: Number,
     default: 0,
     min: 0,
     max: 5
   }
 }, {
-  timestamps: true, // Adds createdAt and updatedAt
-  toJSON: { virtuals: true }, // Ensure virtuals are included when converting to JSON
-  toObject: { virtuals: true } // Ensure virtuals are included when converting to object
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-// Virtual property to easily get the number of questions
+// --- NEW: Mongoose Pre-Save Hook to set correctAnswer ---
+quizSchema.pre('save', function(next) {
+  // 'this' refers to the quiz document being saved
+  // Run if questions array is modified or if it's a new document
+  if (this.isModified('questions') || this.isNew) {
+    console.log(`Running pre-save hook for Quiz "${this.title}"`); // Debug log
+    this.questions.forEach((question, qIndex) => {
+      if (question.options && Array.isArray(question.options) && question.options.length > 0) {
+        // Mongoose ensures options have _ids at this point (or assigns them upon save)
+        const correctOption = question.options.find(opt => opt.isCorrect === true); // Explicit check
+
+        if (correctOption && correctOption._id) {
+          // Found the correct option, set correctAnswer to its ID string
+          question.correctAnswer = correctOption._id.toString();
+          // console.log(` -> Q ${qIndex + 1}: Set correctAnswer to ${question.correctAnswer}`);
+        } else {
+          // No correct option found or marked - ensure correctAnswer is null
+          if (question.correctAnswer !== null) { // Only log if it changed
+              console.warn(` -> Q ${qIndex + 1} ("${question.text}"): No correct option marked or found. Setting correctAnswer to null.`);
+          }
+          question.correctAnswer = null;
+        }
+      } else {
+        // No options array - ensure correctAnswer is null
+         if (question.correctAnswer !== null) { // Only log if it changed
+            console.warn(` -> Q ${qIndex + 1} ("${question.text}"): No options array found. Setting correctAnswer to null.`);
+         }
+        question.correctAnswer = null;
+      }
+    });
+  }
+  next(); // Continue with the save operation
+});
+// --- End Hook ---
+
+
+// Virtual property for number of questions
 quizSchema.virtual('totalQuestions').get(function() {
-  return this.questions.length;
+  return this.questions?.length || 0;
 });
 
-// Virtual property to calculate total possible points
+// Virtual property for total possible points
 quizSchema.virtual('totalPoints').get(function() {
-  // Ensure questions array exists before reducing
   if (!this.questions || this.questions.length === 0) {
     return 0;
   }
   return this.questions.reduce((sum, question) => sum + (question.points || 0), 0);
 });
 
-// Create the model from the schema
+
 const Quiz = mongoose.model('Quiz', quizSchema);
 
 module.exports = Quiz;

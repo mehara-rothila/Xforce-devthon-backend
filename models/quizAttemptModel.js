@@ -13,11 +13,11 @@ const quizAttemptSchema = new mongoose.Schema({
     required: true
   },
   answers: [{
-    questionId: {
-      type: String,
+    questionId: { // Stores Question _id
+      type: String, // Using String as Question _id is ObjectId but stored as string in processing
       required: true
     },
-    answerId: {
+    answerId: { // Stores selected Option _id (as string)
       type: String
     },
     isCorrect: {
@@ -25,11 +25,11 @@ const quizAttemptSchema = new mongoose.Schema({
       default: false
     }
   }],
-  score: {
+  score: { // Raw score based on question points
     type: Number,
     required: true
   },
-  totalPoints: {
+  totalPoints: { // Total possible points for the quiz at time of attempt
     type: Number,
     required: true
   },
@@ -43,6 +43,10 @@ const quizAttemptSchema = new mongoose.Schema({
   },
   timeTaken: {
     type: Number // in seconds
+  },
+  pointsAwarded: { // User points earned from this attempt
+    type: Number,
+    default: 0
   }
 }, { timestamps: true });
 
