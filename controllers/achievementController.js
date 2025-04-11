@@ -231,8 +231,8 @@ exports.checkQuizAchievements = async (userId, quizResult) => {
   if (!userId) return { awarded: [] };
   
   try {
-    // Get user with their current achievements
-    const user = await User.findById(userId).select('achievements');
+    // Get user with their current achievements and quiz points
+    const user = await User.findById(userId).select('achievements quizPointsEarned xp points level');
     if (!user) return { awarded: [] };
     
     // Get user's achievements IDs for quick lookup
@@ -243,7 +243,8 @@ exports.checkQuizAchievements = async (userId, quizResult) => {
       _id: { $nin: userAchievementIds },
       $or: [
         { trigger: 'quiz_perfect_score' },
-        { trigger: 'quiz_completion' }
+        { trigger: 'quiz_completion' },
+        { trigger: 'quiz_points' }  // NEW: Added quiz_points trigger
       ]
     });
     
@@ -322,6 +323,14 @@ exports.checkQuizAchievements = async (userId, quizResult) => {
             else if (relevantAttempts.length === achievement.requirement - 1) {
               isAchieved = true;
             }
+          }
+          break;
+          
+        // NEW CASE: Check for quiz points achievements
+        case 'quiz_points':
+          // Check if user has reached the required quiz points
+          if (user.quizPointsEarned >= achievement.requirement) {
+            isAchieved = true;
           }
           break;
       }
@@ -410,6 +419,12 @@ async function calculateAchievementProgress(userId, achievement) {
         const completions = await QuizAttempt.countDocuments(query);
         return completions;
       
+      // NEW CASE: Calculate progress for quiz points achievements
+      case 'quiz_points':
+        // Get the user's quiz points earned
+        const user = await User.findById(userId).select('quizPointsEarned');
+        return user ? user.quizPointsEarned : 0;
+      
       case 'forum_posts':
         // Count forum topics created
         return await ForumTopic.countDocuments({ author: userId });
@@ -437,8 +452,8 @@ async function calculateAchievementProgress(userId, achievement) {
       
       case 'study_streak':
         // Get user's current streak
-        const user = await User.findById(userId).select('streak');
-        return user ? user.streak : 0;
+        const streakUser = await User.findById(userId).select('streak');
+        return streakUser ? streakUser.streak : 0;
       
       default:
         return 0;

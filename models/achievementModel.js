@@ -45,7 +45,8 @@ const achievementSchema = new mongoose.Schema({
             'forum_best_answers',   // Get best answer votes
             'resource_access',      // Access resources
             'login_streak',         // Daily login streak
-            'study_streak'          // Study activity streak
+            'study_streak',         // Study activity streak
+            'quiz_points'           // NEW: Earn quiz points milestones
         ],
         required: true
     },

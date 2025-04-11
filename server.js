@@ -85,6 +85,175 @@ const runPendingMigrations = async () => {
           
           return result;
         }
+      },
+      // New quiz points achievements migrations
+      {
+        id: '002-quiz-points-bronze',
+        description: 'Add Bronze Point Scorer achievement',
+        async execute() {
+          console.log('Running migration: Adding Bronze Point Scorer achievement');
+          
+          // Get the Achievement model
+          const Achievement = mongoose.models.Achievement || mongoose.model('Achievement');
+          
+          // Create the achievement if it doesn't exist
+          const existingAchievement = await Achievement.findOne({ title: 'Bronze Point Scorer' });
+          if (!existingAchievement) {
+            await Achievement.create({
+              title: 'Bronze Point Scorer',
+              description: 'Earn 100 quiz points',
+              icon: 'bronze_medal',
+              category: 'academic',
+              xp: 50,
+              points: 25,
+              rarity: 'common',
+              trigger: 'quiz_points',
+              requirement: 100
+            });
+            console.log('Created Bronze Point Scorer achievement');
+          } else {
+            console.log('Bronze Point Scorer achievement already exists');
+          }
+          
+          // Record the migration execution
+          await MigrationRegistry.findOneAndUpdate(
+            { id: this.id },
+            { 
+              id: this.id, 
+              description: this.description,
+              executedAt: new Date()
+            },
+            { upsert: true, new: true }
+          );
+          
+          return { success: true };
+        }
+      },
+      {
+        id: '003-quiz-points-silver',
+        description: 'Add Silver Point Scorer achievement',
+        async execute() {
+          console.log('Running migration: Adding Silver Point Scorer achievement');
+          
+          // Get the Achievement model
+          const Achievement = mongoose.models.Achievement || mongoose.model('Achievement');
+          
+          // Create the achievement if it doesn't exist
+          const existingAchievement = await Achievement.findOne({ title: 'Silver Point Scorer' });
+          if (!existingAchievement) {
+            await Achievement.create({
+              title: 'Silver Point Scorer',
+              description: 'Earn 500 quiz points',
+              icon: 'silver_medal',
+              category: 'academic',
+              xp: 150,
+              points: 75,
+              rarity: 'uncommon',
+              trigger: 'quiz_points',
+              requirement: 500
+            });
+            console.log('Created Silver Point Scorer achievement');
+          } else {
+            console.log('Silver Point Scorer achievement already exists');
+          }
+          
+          // Record the migration execution
+          await MigrationRegistry.findOneAndUpdate(
+            { id: this.id },
+            { 
+              id: this.id, 
+              description: this.description,
+              executedAt: new Date()
+            },
+            { upsert: true, new: true }
+          );
+          
+          return { success: true };
+        }
+      },
+      {
+        id: '004-quiz-points-gold',
+        description: 'Add Gold Point Scorer achievement',
+        async execute() {
+          console.log('Running migration: Adding Gold Point Scorer achievement');
+          
+          // Get the Achievement model
+          const Achievement = mongoose.models.Achievement || mongoose.model('Achievement');
+          
+          // Create the achievement if it doesn't exist
+          const existingAchievement = await Achievement.findOne({ title: 'Gold Point Scorer' });
+          if (!existingAchievement) {
+            await Achievement.create({
+              title: 'Gold Point Scorer',
+              description: 'Earn a total of 1,000 quiz points',
+              icon: 'gold_medal',
+              category: 'academic',
+              xp: 300,
+              points: 150,
+              rarity: 'rare',
+              trigger: 'quiz_points',
+              requirement: 1000
+            });
+            console.log('Created Gold Point Scorer achievement');
+          } else {
+            console.log('Gold Point Scorer achievement already exists');
+          }
+          
+          // Record the migration execution
+          await MigrationRegistry.findOneAndUpdate(
+            { id: this.id },
+            { 
+              id: this.id, 
+              description: this.description,
+              executedAt: new Date()
+            },
+            { upsert: true, new: true }
+          );
+          
+          return { success: true };
+        }
+      },
+      {
+        id: '005-quiz-points-champion',
+        description: 'Add Quiz Champion achievement',
+        async execute() {
+          console.log('Running migration: Adding Quiz Champion achievement');
+          
+          // Get the Achievement model
+          const Achievement = mongoose.models.Achievement || mongoose.model('Achievement');
+          
+          // Create the achievement if it doesn't exist
+          const existingAchievement = await Achievement.findOne({ title: 'Quiz Champion' });
+          if (!existingAchievement) {
+            await Achievement.create({
+              title: 'Quiz Champion',
+              description: 'Earn a total of 5,000 quiz points',
+              icon: 'trophy',
+              category: 'academic',
+              xp: 1000,
+              points: 500,
+              rarity: 'legendary',
+              trigger: 'quiz_points',
+              requirement: 5000
+            });
+            console.log('Created Quiz Champion achievement');
+          } else {
+            console.log('Quiz Champion achievement already exists');
+          }
+          
+          // Record the migration execution
+          await MigrationRegistry.findOneAndUpdate(
+            { id: this.id },
+            { 
+              id: this.id, 
+              description: this.description,
+              executedAt: new Date()
+            },
+            { upsert: true, new: true }
+          );
+          
+          return { success: true };
+        }
       }
       // Add more migrations here as needed
     ];
