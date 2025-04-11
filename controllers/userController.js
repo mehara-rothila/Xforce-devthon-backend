@@ -151,6 +151,11 @@ exports.getDashboardSummary = async (req, res, next) => {
         if (!isValidObjectId(userId)) {
             return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
         }
+         // Authorization check: Ensure logged-in user is requesting their own summary or is an admin
+        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
+            return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this summary' });
+        }
+
         console.log(`[getDashboardSummary] START Fetching summary for userId: ${userId}`);
 
         // 1. Fetch Core User Data (Select fields needed directly here)
@@ -346,7 +351,7 @@ exports.getRecentActivity = async (req, res, next) => {
         const { userId } = req.params;
         if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
 
-        // Authorization check
+        // Authorization check - THIS WAS THE FIX
         if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
             return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this activity' });
         }
@@ -507,9 +512,10 @@ exports.getUserProfile = async (req, res, next) => {
         if (!user) return res.status(404).json({ status: 'fail', message: 'User not found' });
 
         // If it's the owner or admin, potentially add virtuals manually if needed and not included by lean
-        if (isOwnProfileOrAdmin && !user.quizAccuracyRate) {
+        if (isOwnProfileOrAdmin && user.quizCompletedCount !== undefined && user.quizTotalPercentageScoreSum !== undefined) { // Check if fields exist
              const count = user.quizCompletedCount || 0;
              const sum = user.quizTotalPercentageScoreSum || 0;
+             // Add the calculated rate directly to the object being sent
              user.quizAccuracyRate = count > 0 ? Math.round(Math.max(0, sum / count)) : 0;
         }
 
