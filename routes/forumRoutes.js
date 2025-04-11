@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const forumController = require('../controllers/forumController');
+const forumModerationController = require('../controllers/forumModerationController');
+
 // Assuming your auth middleware provides protect (authentication)
 // and restrictTo (authorization based on roles like 'admin')
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+
 // --- Public Routes ---
 // Anyone can view categories, topics lists, and individual topics/replies
 router.get('/categories', forumController.getCategories);
@@ -21,35 +24,45 @@ router.post('/replies/:id/vote', forumController.voteReply); // Vote on a reply
 
 // --- Admin Routes (Require Admin Role) ---
 // Apply 'restrictTo' middleware for admin-only actions
+router.use('/moderation', restrictTo('admin'));
 
-// Category Management (Admin Only)
-router.post(
-    '/categories',
-    restrictTo('admin'), // Only admins can create categories
-    forumController.createCategory
+// Moderation routes - Fixed to match the API client's expected endpoints
+router.get(
+    '/moderation/pending-topics',
+    forumModerationController.getPendingTopics
 );
+
+router.get(
+    '/moderation/pending-replies',
+    forumModerationController.getPendingReplies
+);
+
 router.patch(
-    '/categories/:id',
-    restrictTo('admin'), // Only admins can update categories
-    forumController.updateCategory
+    '/moderation/topics/:id/approve',
+    forumModerationController.approveTopic
 );
+
 router.delete(
-    '/categories/:id',
-    restrictTo('admin'), // Only admins can delete categories
-    forumController.deleteCategory
+    '/moderation/topics/:id/reject',
+    forumModerationController.rejectTopic
 );
 
-// Topic Management (Admin/Moderator - adjust roles as needed)
+router.patch(
+    '/moderation/replies/:id/approve',
+    forumModerationController.approveReply
+);
+
 router.delete(
-    '/topics/:id',
-    restrictTo('admin', 'moderator'), // Admins or moderators can delete topics
-    forumController.deleteTopic
+    '/moderation/replies/:id/reject',
+    forumModerationController.rejectReply
 );
 
-// Potential Future Admin Routes for Topics/Replies:
-// router.patch('/topics/:id/pin', restrictTo('admin', 'moderator'), forumController.pinTopic);
-// router.patch('/topics/:id/lock', restrictTo('admin', 'moderator'), forumController.lockTopic);
-// router.delete('/replies/:id', restrictTo('admin', 'moderator'), forumController.deleteReply);
+// Add category management routes (admin only)
+router.post('/categories', restrictTo('admin'), forumController.createCategory);
+router.patch('/categories/:id', restrictTo('admin'), forumController.updateCategory);
+router.delete('/categories/:id', restrictTo('admin'), forumController.deleteCategory);
 
+// Admin route for topic deletion
+router.delete('/topics/:id', restrictTo('admin', 'moderator'), forumController.deleteTopic);
 
 module.exports = router;

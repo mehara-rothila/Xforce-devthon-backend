@@ -19,6 +19,10 @@ const forumReplySchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isApproved: {
+    type: Boolean,
+    default: false
+  },
   upvotes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
