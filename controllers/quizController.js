@@ -286,14 +286,15 @@ exports.deleteQuiz = async (req, res, next) => {
 /**
  * @desc     Submit a quiz attempt
  * @route    POST /api/quizzes/:id/attempts
- * @access   Private (Apply middleware in routes)
+ * @access   Private (Requires 'protect' middleware in routes)
  */
-// Updated submitQuizAttempt function in quizController.js
 exports.submitQuizAttempt = async (req, res, next) => {
+  // Add log at the very beginning to check req.user
+  console.log('[submitQuizAttempt] req.user at start:', JSON.stringify(req.user));
   try {
     console.log('Request body:', JSON.stringify(req.body, null, 2));
     console.log('Request params:', JSON.stringify(req.params, null, 2));
-    console.log('Request user:', req.user);
+    // console.log('Request user:', req.user); // Redundant with the log above
 
     const quizId = req.params.id;
     const quiz = await Quiz.findById(quizId).populate('subject').lean({ virtuals: true });
@@ -376,6 +377,10 @@ exports.submitQuizAttempt = async (req, res, next) => {
         attemptId = attempt._id;
         console.log(`Quiz attempt ${attemptId} saved for user ${userId}`);
 
+        // --- ADDED CONSOLE LOG 1 ---
+        // Log the values *before* the update operation
+        console.log(`[submitQuizAttempt] BEFORE UPDATE - Incrementing stats for user ${userId}: XP+=${xpAwarded}, Points+=${pointsAwarded}, QuizPoints+=${pointsAwarded}, Completed+=1, ScoreSum+=${percentageScore}`);
+
         // 2. Update user's aggregate stats and level-related fields
         const userUpdate = await User.findByIdAndUpdate(
           userId,
@@ -388,16 +393,27 @@ exports.submitQuizAttempt = async (req, res, next) => {
               quizTotalPercentageScoreSum: percentageScore // Add this attempt's score % to the sum
             }
           },
-          { new: true }
+          { new: true } // Return the updated document
         );
 
+        // --- ADDED CONSOLE LOG 2 ---
+        // Log the result *after* the update operation
+        if (userUpdate) {
+            console.log(`[submitQuizAttempt] AFTER UPDATE - User data: XP=${userUpdate.xp}, Points=${userUpdate.points}, QuizPoints=${userUpdate.quizPointsEarned}, Completed=${userUpdate.quizCompletedCount}, ScoreSum=${userUpdate.quizTotalPercentageScoreSum}`);
+        } else {
+            console.warn(`[submitQuizAttempt] AFTER UPDATE - User ${userId} not found during update. Stats not updated.`);
+        }
+        // --- END ADDED CONSOLE LOGS ---
+
         if (!userUpdate) {
+          // This warning is now slightly redundant due to the log above, but keep it for clarity
           console.warn(`[submitQuizAttempt] User ${userId} not found during update. Stats not updated.`);
         } else {
-          console.log(`User ${userId} stats updated: XP=${userUpdate.xp}, Points=${userUpdate.points}, QuizPoints=${userUpdate.quizPointsEarned}, Completed=${userUpdate.quizCompletedCount}`);
           // Check for level up based on the updated XP
           const oldLevel = userUpdate.level;
-          const newLevel = Math.floor(1 + Math.sqrt(userUpdate.xp / 100));
+          // Ensure xp is treated as a number for calculation
+          const currentXP = typeof userUpdate.xp === 'number' ? userUpdate.xp : 0;
+          const newLevel = Math.floor(1 + Math.sqrt(currentXP / 100));
 
           if (newLevel > oldLevel) {
             await User.findByIdAndUpdate(userId, { level: newLevel });
@@ -413,12 +429,15 @@ exports.submitQuizAttempt = async (req, res, next) => {
         }
       } catch (error) {
         console.error(`Error processing authenticated quiz attempt for user ${userId}:`, error);
+        // Consider how to handle this - should the user see an error?
+        // Maybe set a flag to indicate stat update failure in the response?
       }
     } else {
-      console.log('Quiz submitted anonymously (no user authentication)');
+      console.log('Quiz submitted anonymously (no user authentication) OR req.user was missing.');
     }
 
     // --- Prepare and Send Response ---
+    // Ensure pointsAwarded and xpAwarded are included even if user update failed or was skipped
     const responseData = {
       attemptId, score, totalPoints, percentageScore, passed, correctAnswers: correctCount,
       totalQuestions: quiz.questions.length, pointsAwarded, xpAwarded, achievements: achievementResults.awarded
