@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema({
   level: { type: Number, default: 1 },
   xp: { type: Number, default: 0 },
   points: { type: Number, default: 0 },
+  quizPointsEarned: { type: Number, default: 0, min: 0 }, // New field for tracking quiz-specific points
   reputation: { type: Number, default: 0 },
   lastActive: { type: Date, default: Date.now },
   streak: { type: Number, default: 0 },

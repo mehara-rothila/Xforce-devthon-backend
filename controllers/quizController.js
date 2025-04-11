@@ -288,93 +288,75 @@ exports.deleteQuiz = async (req, res, next) => {
  * @route    POST /api/quizzes/:id/attempts
  * @access   Private (Apply middleware in routes)
  */
+// Updated submitQuizAttempt function in quizController.js
 exports.submitQuizAttempt = async (req, res, next) => {
   try {
     console.log('Request body:', JSON.stringify(req.body, null, 2));
     console.log('Request params:', JSON.stringify(req.params, null, 2));
-    console.log('Request user:', req.user); // Ensure protect middleware provides req.user
+    console.log('Request user:', req.user);
 
     const quizId = req.params.id;
-    // Populate subject details needed for points/XP calculation
-    const quiz = await Quiz.findById(quizId).populate('subject').lean({ virtuals: true }); // Fetch virtuals like totalPoints
-    if (!quiz) {
-      return res.status(404).json({ status: 'fail', message: 'Quiz not found' });
-    }
+    const quiz = await Quiz.findById(quizId).populate('subject').lean({ virtuals: true });
+    if (!quiz) return res.status(404).json({ status: 'fail', message: 'Quiz not found' });
 
     // Basic validation
     const { answers, timeTaken } = req.body;
-    if (!answers || !Array.isArray(answers)) {
-      return res.status(400).json({ status: 'fail', message: 'Answers must be provided as an array' });
-    }
+    if (!answers || !Array.isArray(answers)) return res.status(400).json({ status: 'fail', message: 'Answers must be provided as an array' });
 
     // --- Score Calculation Logic ---
-    let score = 0;
-    // Use totalPoints from the fetched quiz virtual property if available, otherwise calculate
-    let totalPoints = quiz.totalPoints || 0; // Get pre-calculated total points
-    let correctCount = 0;
-    let questionsInAttempt = 0; // Count questions actually submitted
+    let score = 0, totalPoints = quiz.totalPoints || 0, correctCount = 0, questionsInAttempt = 0;
 
     // Calculate totalPoints manually if not available from virtuals (fallback)
     if (totalPoints === 0) {
-        console.warn("Quiz totalPoints virtual not available, calculating manually.");
-        totalPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 0), 0);
+      console.warn("Quiz totalPoints virtual not available, calculating manually.");
+      totalPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 0), 0);
     }
 
     // Process answers
     const processedAnswers = answers.map(answer => {
-        // Find the corresponding question in the fetched quiz data
       const question = quiz.questions.find(q => q._id.toString() === answer.questionId);
-      if (!question) {
-          console.warn(`Question ID ${answer.questionId} from submission not found in quiz ${quizId}. Skipping.`);
-          return null; // Skip if question not found in current quiz version
-      }
+      if (!question) { console.warn(`Question ID ${answer.questionId} from submission not found in quiz ${quizId}. Skipping.`); return null; }
 
       questionsInAttempt++;
-      const questionPoints = question.points || 0; // Use actual points from question
-
+      const questionPoints = question.points || 0;
       let isCorrect = false;
-      // Check if the submitted answerId matches the correct answer ID stored in the question
       if (question.correctAnswer && answer.answerId === question.correctAnswer.toString()) {
         score += questionPoints;
         correctCount += 1;
         isCorrect = true;
       }
 
-      return {
-        questionId: answer.questionId,
-        answerId: answer.answerId,
-        isCorrect
-      };
-    }).filter(a => a !== null); // Filter out any skipped questions
+      return { questionId: answer.questionId, answerId: answer.answerId, isCorrect };
+    }).filter(a => a !== null);
 
     // Calculate percentage score based on the total points of the QUIZ, not just answered questions
     const percentageScore = totalPoints > 0 ? Math.round((score / totalPoints) * 100) : 0;
-    const passScore = quiz.passScore || 70; // Use quiz pass score or default
+    const passScore = quiz.passScore || 70;
     const passed = percentageScore >= passScore;
 
-    // --- Update quiz attempts count --- (Optional: Can be done here or via aggregation later)
+    // Update quiz attempts count
     await Quiz.findByIdAndUpdate(quizId, { $inc: { attempts: 1 } });
 
     // --- POINTS SYSTEM CALCULATION ---
     const calculatePointsAwarded = () => {
       const difficultyMultiplier = { 'easy': 1, 'medium': 1.5, 'hard': 2.5 }[quiz.difficulty] || 1;
       const basePoints = 10;
-      const questionCountFactor = Math.min(2, Math.log10(quiz.questions.length + 1) + 0.5); // Based on total questions in quiz
+      const questionCountFactor = Math.min(2, Math.log10(quiz.questions.length + 1) + 0.5);
       const perfectScoreBonus = percentageScore === 100 ? 1.2 : 1;
       let timeBonus = 1;
-      if (timeTaken && quiz.timeLimit && quiz.timeLimit > 0) { // Ensure timeLimit is positive
+      if (timeTaken && quiz.timeLimit && quiz.timeLimit > 0) {
         const timePercentage = timeTaken / (quiz.timeLimit * 60);
-        if (timePercentage < 0.5) { timeBonus = 1.1; } // Bonus for finishing fast
+        if (timePercentage < 0.5) timeBonus = 1.1;
       }
       const rawPoints = basePoints * difficultyMultiplier * (percentageScore / 100) * questionCountFactor * perfectScoreBonus * timeBonus;
-      return Math.max(1, Math.round(rawPoints)); // Minimum 1 point
+      return Math.max(1, Math.round(rawPoints));
     };
     const pointsAwarded = calculatePointsAwarded();
     console.log(`Points awarded for quiz completion: ${pointsAwarded}`);
 
     // --- XP CALCULATION ---
     const xpMultiplier = { 'easy': 1, 'medium': 1.5, 'hard': 2 }[quiz.difficulty] || 1;
-    const xpAwarded = Math.floor(percentageScore * 0.5 * xpMultiplier); // Example XP calculation
+    const xpAwarded = Math.floor(percentageScore * 0.5 * xpMultiplier);
     console.log(`XP awarded for quiz completion: ${xpAwarded}`);
 
     // --- Save attempt and Update User Stats (if authenticated) ---
@@ -387,87 +369,60 @@ exports.submitQuizAttempt = async (req, res, next) => {
       try {
         // 1. Save quiz attempt
         const attempt = await QuizAttempt.create({
-          user: userId,
-          quiz: quiz._id,
-          answers: processedAnswers,
-          score: score,
-          totalPoints: totalPoints, // Store total possible points at time of attempt
-          percentageScore: percentageScore,
-          passed: passed,
-          timeTaken: timeTaken || null,
-          pointsAwarded: pointsAwarded // Store points awarded for this specific attempt
+          user: userId, quiz: quiz._id, answers: processedAnswers, score: score,
+          totalPoints: totalPoints, percentageScore: percentageScore, passed: passed,
+          timeTaken: timeTaken || null, pointsAwarded: pointsAwarded
         });
         attemptId = attempt._id;
         console.log(`Quiz attempt ${attemptId} saved for user ${userId}`);
 
-        // ************ START FIX: Update user's aggregate stats ************
         // 2. Update user's aggregate stats and level-related fields
         const userUpdate = await User.findByIdAndUpdate(
           userId,
           {
             $inc: {
-              xp: xpAwarded,                   // Increment XP
-              points: pointsAwarded,            // Increment total points
-              quizCompletedCount: 1,            // Increment completed count by 1
+              xp: xpAwarded,                     // Increment XP
+              points: pointsAwarded,             // Increment total points
+              quizPointsEarned: pointsAwarded,   // Increment quiz-specific points
+              quizCompletedCount: 1,             // Increment completed count by 1
               quizTotalPercentageScoreSum: percentageScore // Add this attempt's score % to the sum
             }
-            // We could potentially set lastActive here too: $set: { lastActive: new Date() }
           },
-          { new: true } // Return the updated user document to check for level up
+          { new: true }
         );
-        // ************ END FIX ************
 
         if (!userUpdate) {
-           console.warn(`[submitQuizAttempt] User ${userId} not found during update. Stats not updated.`);
-           // Consider if this should be a bigger error
+          console.warn(`[submitQuizAttempt] User ${userId} not found during update. Stats not updated.`);
         } else {
-            console.log(`User ${userId} stats updated: XP=${userUpdate.xp}, Points=${userUpdate.points}, Completed=${userUpdate.quizCompletedCount}`);
-            // 3. Check for level up based on the updated XP
-            const oldLevel = userUpdate.level; // Level before this update might be different if fetched fresh
-            // Use a consistent level formula (ensure this matches dashboard/other areas)
-            const newLevel = Math.floor(1 + Math.sqrt(userUpdate.xp / 100)); // Example formula
+          console.log(`User ${userId} stats updated: XP=${userUpdate.xp}, Points=${userUpdate.points}, QuizPoints=${userUpdate.quizPointsEarned}, Completed=${userUpdate.quizCompletedCount}`);
+          // Check for level up based on the updated XP
+          const oldLevel = userUpdate.level;
+          const newLevel = Math.floor(1 + Math.sqrt(userUpdate.xp / 100));
 
-            if (newLevel > oldLevel) {
-              // Update the user's level if it increased
-              await User.findByIdAndUpdate(userId, { level: newLevel });
-              console.log(`User ${userId} leveled up from ${oldLevel} to level ${newLevel}!`);
-              // TODO: Trigger level-up achievements if applicable
-            }
+          if (newLevel > oldLevel) {
+            await User.findByIdAndUpdate(userId, { level: newLevel });
+            console.log(`User ${userId} leveled up from ${oldLevel} to level ${newLevel}!`);
+          }
 
-            // 4. Check for quiz-related achievements
-            achievementResults = await achievementController.checkQuizAchievements(userId, {
-              percentageScore,
-              passed,
-              difficulty: quiz.difficulty,
-              quizId: quiz._id.toString(),
-              subject: quiz.subject?._id?.toString() || null // Safely access subject ID
-            });
-             console.log(`Checked achievements for user ${userId}. Awarded: ${achievementResults.awarded.length}`);
+          // 4. Check for quiz-related achievements
+          achievementResults = await achievementController.checkQuizAchievements(userId, {
+            percentageScore, passed, difficulty: quiz.difficulty,
+            quizId: quiz._id.toString(), subject: quiz.subject?._id?.toString() || null
+          });
+          console.log(`Checked achievements for user ${userId}. Awarded: ${achievementResults.awarded.length}`);
         }
-
       } catch (error) {
         console.error(`Error processing authenticated quiz attempt for user ${userId}:`, error);
-        // Decide on error handling: Should we rollback attempt save? For now, log and continue.
-        // The response will still contain score details, but DB update might have failed.
       }
     } else {
       console.log('Quiz submitted anonymously (no user authentication)');
-      // Handle anonymous attempts if needed (e.g., store in session, but not in DB permanently)
     }
 
     // --- Prepare and Send Response ---
     const responseData = {
-        attemptId, // ID of the saved attempt (null if anonymous)
-        score,
-        totalPoints,
-        percentageScore,
-        passed,
-        correctAnswers: correctCount,
-        totalQuestions: quiz.questions.length, // Total questions in the quiz
-        pointsAwarded, // Points awarded for *this* attempt
-        xpAwarded,     // XP awarded for *this* attempt
-        achievements: achievementResults.awarded // Achievements unlocked by *this* attempt
-      };
+      attemptId, score, totalPoints, percentageScore, passed, correctAnswers: correctCount,
+      totalQuestions: quiz.questions.length, pointsAwarded, xpAwarded, achievements: achievementResults.awarded
+    };
 
     console.log("Sending quiz submission response:", responseData);
     res.status(200).json({
@@ -475,16 +430,11 @@ exports.submitQuizAttempt = async (req, res, next) => {
       message: 'Quiz attempt submitted successfully.',
       data: responseData
     });
-
   } catch (error) {
     console.error('Outer error submitting quiz attempt:', error);
-    // Ensure error is passed to the central handler if headers not sent
-    if (!res.headersSent) {
-        next(error); // Pass to the default error handler
-    }
+    if (!res.headersSent) next(error);
   }
 };
-
 
 /**
  * @desc     Get quizzes for a specific subject

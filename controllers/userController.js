@@ -1,46 +1,41 @@
 // controllers/userController.js
-const User = require('../models/userModel'); // Ensure path is correct
-const UserProgress = require('../models/userProgressModel'); // Ensure path is correct
-const Subject = require('../models/subjectModel'); // Ensure path is correct
-const Achievement = require('../models/achievementModel'); // Ensure path is correct
-const ForumReply = require('../models/forumReplyModel'); // Ensure path is correct
-const ForumTopic = require('../models/forumTopicModel'); // Ensure path is correct
-const Quiz = require('../models/quizModel'); // Ensure path is correct
-const QuizAttempt = require('../models/quizAttemptModel'); // Ensure path is correct
-const ResourceAccess = require('../models/resourceAccessModel'); // Ensure path is correct
-const mongoose = require('mongoose'); // Required for ObjectId check
-const validator = require('validator'); // For email validation in updateUserProfile
+const User = require('../models/userModel');
+const UserProgress = require('../models/userProgressModel');
+const Subject = require('../models/subjectModel');
+const Achievement = require('../models/achievementModel');
+const ForumReply = require('../models/forumReplyModel');
+const ForumTopic = require('../models/forumTopicModel');
+const Quiz = require('../models/quizModel');
+const QuizAttempt = require('../models/quizAttemptModel');
+const ResourceAccess = require('../models/resourceAccessModel');
+const mongoose = require('mongoose');
+const validator = require('validator');
 
 // --- Helper function to check if an ID is valid ---
 const isValidObjectId = (id) => {
-    // Check if id is provided and is a valid MongoDB ObjectId
     return id && mongoose.Types.ObjectId.isValid(id);
 };
 
 // --- Helper function to get Quiz Stats (Reads stored aggregates + calculates best score) ---
 async function getQuizStats(userId) {
-     try {
-        console.log(`[getQuizStats] START for user ${userId}`); // Log Start
+    try {
+        console.log(`[getQuizStats] START for user ${userId}`);
         // Fetch user, selecting necessary fields and including virtuals
         const user = await User.findById(userId)
-                          .select('quizCompletedCount quizTotalPercentageScoreSum points') // Select aggregate fields + total points
-                          .lean({ virtuals: true }); // IMPORTANT: Include virtuals to get quizAccuracyRate
+                           .select('quizCompletedCount quizTotalPercentageScoreSum points quizPointsEarned') // Added quizPointsEarned
+                           .lean({ virtuals: true }); // IMPORTANT: Include virtuals to get quizAccuracyRate
 
-        // *** Log RAW user data fetched ***
         console.log(`[getQuizStats] Fetched user data (lean):`, JSON.stringify(user, null, 2));
 
         if (!user) {
             console.warn(`[getQuizStats] User not found for ID ${userId}`);
-            // Return default structure matching what frontend expects
-            return { completed: 0, avgScore: 0, pointsEarned: 0, passed: 0, failed: 0, bestScore: 0 };
+            return { completed: 0, avgScore: 0, pointsEarned: 0, totalPoints: 0, passed: 0, failed: 0, bestScore: 0 };
         }
 
-        // *** Log values used for calculation ***
-        console.log(`[getQuizStats] Values before return: count=${user.quizCompletedCount}, sum=${user.quizTotalPercentageScoreSum}, virtualAccuracy=${user.quizAccuracyRate}, points=${user.points}`);
+        console.log(`[getQuizStats] Values before return: count=${user.quizCompletedCount}, sum=${user.quizTotalPercentageScoreSum}, virtualAccuracy=${user.quizAccuracyRate}, points=${user.points}, quizPoints=${user.quizPointsEarned}`);
 
         // --- Calculate Best Score (Optional - requires querying attempts) ---
         let bestScore = 0;
-        // Check if quizCompletedCount exists and is greater than 0
         if (user.quizCompletedCount && user.quizCompletedCount > 0) {
             const bestAttempt = await QuizAttempt.findOne({ user: userId })
                                               .sort({ percentageScore: -1 }) // Sort descending by score
@@ -49,28 +44,27 @@ async function getQuizStats(userId) {
                                               .lean();
             bestScore = bestAttempt ? bestAttempt.percentageScore : 0;
         }
-        // Note: Calculating passed/failed still requires querying QuizAttempt if needed.
 
         const result = {
-            completed: user.quizCompletedCount || 0, // From stored aggregate
-            avgScore: user.quizAccuracyRate || 0,    // From virtual property
-            pointsEarned: user.points || 0,          // Overall points from user doc
-            passed: 0, // Not calculated here to optimize
-            failed: 0, // Not calculated here to optimize
+            completed: user.quizCompletedCount || 0,        // From stored aggregate
+            avgScore: user.quizAccuracyRate || 0,           // From virtual property
+            pointsEarned: user.quizPointsEarned || 0,       // NEW: Use quiz-specific points
+            totalPoints: user.points || 0,                  // Keep overall points for reference
+            passed: 0,                                      // Not calculated here to optimize
+            failed: 0,                                      // Not calculated here to optimize
             bestScore: bestScore,
         };
-        console.log(`[getQuizStats] Calculated Result for ${userId}:`, result); // Log final result
+        console.log(`[getQuizStats] Calculated Result for ${userId}:`, result);
         return result;
     } catch (error) {
         console.error(`[getQuizStats] Error for user ${userId}:`, error);
-        // Return default structure on error
-        return { completed: 0, avgScore: 0, pointsEarned: 0, passed: 0, failed: 0, bestScore: 0 };
+        return { completed: 0, avgScore: 0, pointsEarned: 0, totalPoints: 0, passed: 0, failed: 0, bestScore: 0 };
     }
 }
 
 // --- Helper: getForumStats ---
 async function getForumStats(userId) {
-     try {
+    try {
         // Ensure models are correctly required at the top
         const topics = await ForumTopic.countDocuments({ author: userId });
         const replies = await ForumReply.countDocuments({ author: userId });
@@ -126,13 +120,12 @@ async function getUserRank(userId) {
 
 // --- Helper: getRandomPastDate ---
 function getRandomPastDate(minDaysAgo, maxDaysAgo) {
-     const now = new Date();
-     const daysAgo = Math.floor(Math.random() * (maxDaysAgo - minDaysAgo + 1)) + minDaysAgo;
-     const pastDate = new Date(now);
-     pastDate.setDate(pastDate.getDate() - daysAgo);
-     return pastDate;
+    const now = new Date();
+    const daysAgo = Math.floor(Math.random() * (maxDaysAgo - minDaysAgo + 1)) + minDaysAgo;
+    const pastDate = new Date(now);
+    pastDate.setDate(pastDate.getDate() - daysAgo);
+    return pastDate;
 }
-
 
 /**
  * @desc     Get summary data for the dashboard sidebar for a specific user
@@ -140,89 +133,81 @@ function getRandomPastDate(minDaysAgo, maxDaysAgo) {
  * @access   Private (Should be protected)
  */
 exports.getDashboardSummary = async (req, res, next) => {
-  try {
-    const userId = req.params.userId;
-    if (!isValidObjectId(userId)) {
-        return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
-    }
-    console.log(`[getDashboardSummary] START Fetching summary for userId: ${userId}`);
-
-    // 1. Fetch Core User Data
-    const user = await User.findById(userId)
-                         .select('name level xp points streak subjects') // Select fields needed directly
-                         .lean(); // Lean is sufficient here as getQuizStats fetches aggregates separately
-
-    if (!user) {
-      console.log("[getDashboardSummary] User not found, returning 404");
-      return res.status(404).json({ status: 'fail', message: 'User not found' });
-    }
-
-    // 2. Fetch User Progress Data
-    const userProgressRecords = await UserProgress.find({ user: userId })
-                                          .populate('subject', 'name color').lean();
-    const overallProgressPerSubject = userProgressRecords.map(record => {
-        if (!record?.subject) return null;
-        let calculatedProgress = record.overallSubjectProgress || 0;
-        if (record.topicProgress && record.topicProgress.length > 0) {
-             const totalProgress = record.topicProgress.reduce((sum, topic) => sum + (topic?.progress || 0), 0);
-             if (record.topicProgress.length > 0) { // Avoid division by zero
-                 calculatedProgress = Math.round(totalProgress / record.topicProgress.length);
-             }
+    try {
+        const userId = req.params.userId;
+        if (!isValidObjectId(userId)) {
+            return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
         }
-        return { subjectId: record.subject._id.toString(), name: record.subject.name, color: record.subject.color || '#808080', progress: calculatedProgress };
-    }).filter(sp => sp !== null);
+        console.log(`[getDashboardSummary] START Fetching summary for userId: ${userId}`);
 
-    // 3. Calculate Points to Next Level
-    const xpForNextLevel = (user.level + 1) * 150; // Example formula
-    const pointsToNextLevel = Math.max(0, xpForNextLevel - user.xp);
+        // 1. Fetch Core User Data
+        const user = await User.findById(userId).select('name level xp points quizPointsEarned streak subjects').lean();
 
-    // 4. Get additional stats using helper functions
-    console.log(`[getDashboardSummary] Calling getQuizStats for ${userId}`);
-    const quizStats = await getQuizStats(userId); // Uses new logic reading aggregates
-    console.log(`[getDashboardSummary] Received quizStats:`, quizStats); // Log result from helper
+        if (!user) {
+            console.log("[getDashboardSummary] User not found, returning 404");
+            return res.status(404).json({ status: 'fail', message: 'User not found' });
+        }
 
-    const forumStats = await getForumStats(userId);
-    const resourceStats = await getResourceStats(userId);
-    const studyStats = { // Placeholder
-      hours: Math.floor(Math.random() * 100) + 50,
-      lastSession: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000))
-    };
-    const userRank = await getUserRank(userId);
+        // 2. Fetch User Progress Data
+        const userProgressRecords = await UserProgress.find({ user: userId }).populate('subject', 'name color').lean();
+        const overallProgressPerSubject = userProgressRecords.map(record => {
+            if (!record?.subject) return null;
+            let calculatedProgress = record.overallSubjectProgress || 0;
+            if (record.topicProgress && record.topicProgress.length > 0) {
+                const totalProgress = record.topicProgress.reduce((sum, topic) => sum + (topic?.progress || 0), 0);
+                if (record.topicProgress.length > 0) calculatedProgress = Math.round(totalProgress / record.topicProgress.length);
+            }
+            return { subjectId: record.subject._id.toString(), name: record.subject.name, color: record.subject.color || '#808080', progress: calculatedProgress };
+        }).filter(sp => sp !== null);
 
-    // 5. Prepare Response Data Object
-    const dashboardSummary = {
-        userName: user.name,
-        level: user.level,
-        xp: user.xp,
-        pointsToNextLevel: pointsToNextLevel,
-        streak: user.streak,
-        points: user.points, // Overall points from user doc
-        leaderboardRank: userRank,
-        subjectProgress: overallProgressPerSubject,
-        quizStats: { // Nest quiz-specific stats from helper
-            completed: quizStats.completed, // From user.quizCompletedCount
-            avgScore: quizStats.avgScore,   // From user.quizAccuracyRate (virtual)
-            bestScore: quizStats.bestScore, // Calculated from QuizAttempt
-        },
-        forumStats,
-        resourceStats,
-        studyStats,
-        rank: userRank // Often same as leaderboardRank
-    };
+        // 3. Calculate Points to Next Level
+        const xpForNextLevel = (user.level + 1) * 150;
+        const pointsToNextLevel = Math.max(0, xpForNextLevel - user.xp);
 
-    // 6. Send Response
-    console.log("[getDashboardSummary] Sending final summary response...");
-    res.status(200).json({ status: 'success', data: { summary: dashboardSummary } });
+        // 4. Get additional stats using helper functions
+        console.log(`[getDashboardSummary] Calling getQuizStats for ${userId}`);
+        const quizStats = await getQuizStats(userId);
+        console.log(`[getDashboardSummary] Received quizStats:`, quizStats);
 
-  } catch (err) {
-     console.error("[getDashboardSummary] Error:", err);
-     // Ensure error is passed to the next middleware
-     if (!res.headersSent) {
-        next(err); // Pass to central error handler
-     } else {
-         console.error("[getDashboardSummary] Headers already sent, could not forward error.");
-     }
-  }
+        const forumStats = await getForumStats(userId);
+        const resourceStats = await getResourceStats(userId);
+        const studyStats = {
+            hours: Math.floor(Math.random() * 100) + 50,
+            lastSession: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000))
+        };
+        const userRank = await getUserRank(userId);
+
+        // 5. Prepare Response Data Object
+        const dashboardSummary = {
+            userName: user.name,
+            level: user.level,
+            xp: user.xp,
+            pointsToNextLevel: pointsToNextLevel,
+            streak: user.streak,
+            points: user.points,                         // Overall points from user doc
+            quizPointsEarned: user.quizPointsEarned || 0, // NEW: Specific quiz points field
+            leaderboardRank: userRank,
+            subjectProgress: overallProgressPerSubject,
+            quizStats: {
+                completed: quizStats.completed,
+                avgScore: quizStats.avgScore,
+                bestScore: quizStats.bestScore,
+                pointsEarned: quizStats.pointsEarned       // NEW: Include quiz-specific points in quiz stats
+            },
+            forumStats,
+            resourceStats,
+            studyStats,
+            rank: userRank
+        };
+
+        // 6. Send Response
+        console.log("[getDashboardSummary] Sending final summary response...");
+        res.status(200).json({ status: 'success', data: { summary: dashboardSummary } });
+    } catch (err) {
+        console.error("[getDashboardSummary] Error:", err);
+        if (!res.headersSent) next(err);
+        else console.error("[getDashboardSummary] Headers already sent, could not forward error.");
+    }
 };
 
 /**
@@ -250,6 +235,7 @@ exports.getDetailedSubjectProgress = async (req, res, next) => {
             const topicB = progressDoc.subject.topics.find(st => st._id.toString() === b.id);
             return (topicA?.order ?? Infinity) - (topicB?.order ?? Infinity);
         });
+        
         // Placeholder analytics - replace with real calculations if needed
         const analytics = {
             timeSpent: "N/A",
@@ -257,6 +243,7 @@ exports.getDetailedSubjectProgress = async (req, res, next) => {
             weakAreas: detailedTopicProgress.filter(t => t.mastery === 'low').map(t => t.name),
             performanceComparison: { overallStanding: "N/A", quizCompletionRate: "N/A", consistencyScore: "N/A" }
         };
+        
         const responseData = {
             subjectId: progressDoc.subject._id.toString(),
             subjectName: progressDoc.subject.name,
@@ -265,8 +252,12 @@ exports.getDetailedSubjectProgress = async (req, res, next) => {
             topics: detailedTopicProgress,
             analytics: analytics
         };
+        
         res.status(200).json({ status: 'success', data: responseData });
-    } catch (err) { console.error("[Backend] Error in getDetailedSubjectProgress:", err); next(err); }
+    } catch (err) { 
+        console.error("[Backend] Error in getDetailedSubjectProgress:", err); 
+        next(err); 
+    }
 };
 
 /**
@@ -287,9 +278,11 @@ exports.getUserAchievements = async (req, res, next) => {
             return { id: ach._id.toString(), title: ach.title, description: ach.description, icon: ach.icon || 'default-icon', category: ach.category, xp: ach.xp, rarity: ach.rarity, unlocked: isUnlocked, unlockedAt: isUnlocked ? getRandomPastDate(30, 180) : null };
         });
         res.status(200).json({ status: 'success', results: userAchievementsData.length, data: { achievements: userAchievementsData } });
-    } catch (err) { console.error("[Backend] Error in getUserAchievements:", err); next(err); }
+    } catch (err) { 
+        console.error("[Backend] Error in getUserAchievements:", err); 
+        next(err); 
+    }
 };
-
 
 /**
  * @desc     Get user's recent activity
@@ -297,32 +290,37 @@ exports.getUserAchievements = async (req, res, next) => {
  * @access   Private (Should be protected)
  */
 exports.getRecentActivity = async (req, res, next) => {
-  try {
-    const { userId } = req.params;
-    if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
-    const userExists = await User.findById(userId).lean();
-    if (!userExists) return res.status(404).json({ status: 'fail', message: 'User not found' });
-    const limit = 10; // Fetch more items initially to get a mix
-    // Fetch activities concurrently
-    const [quizAttempts, forumReplies, forumTopics, resourceAccess] = await Promise.all([
-        QuizAttempt.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).populate({ path: 'quiz', select: 'title subject', populate: { path: 'subject', select: 'name' } }).lean(),
-        ForumReply.find({ author: userId }).sort({ createdAt: -1 }).limit(limit).populate({ path: 'topic', select: 'title category', populate: { path: 'category', select: 'name' } }).lean(),
-        ForumTopic.find({ author: userId }).sort({ createdAt: -1 }).limit(limit).populate('category', 'name').lean(),
-        ResourceAccess.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).populate({ path: 'resource', select: 'title subject type', populate: { path: 'subject', select: 'name' } }).lean()
-    ]);
-    // Format and combine activities
-    const activities = [
-      ...quizAttempts.map(a => ({ id: a._id.toString(), type: 'quiz', title: `Completed ${a.quiz?.title || 'a quiz'}`, subject: a.quiz?.subject?.name || 'General', details: `Score: ${a.percentageScore}%`, timestamp: a.createdAt.toISOString() })),
-      ...forumReplies.map(r => ({ id: r._id.toString(), type: 'forum', title: `Replied to "${r.topic?.title || 'a discussion'}"`, subject: r.topic?.category?.name || 'Forum', details: 'Forum Reply', timestamp: r.createdAt.toISOString() })),
-      ...forumTopics.map(t => ({ id: t._id.toString(), type: 'forum', title: `Created topic "${t.title}"`, subject: t.category?.name || 'Forum', details: 'New Topic', timestamp: t.createdAt.toISOString() })),
-      ...resourceAccess.map(acc => ({ id: acc._id.toString(), type: 'resource', title: `${(acc.accessType || 'viewed').replace(/^\w/, c => c.toUpperCase())} ${acc.resource?.title || 'a resource'}`, subject: acc.resource?.subject?.name || 'General', details: acc.resource?.type || 'Resource', timestamp: acc.createdAt.toISOString() }))
-    ]
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()) // Sort combined list
-    .slice(0, 10); // Limit overall total shown
-    res.status(200).json({ status: 'success', results: activities.length, data: { activities } });
-  } catch (err) { console.error('[Backend Activity] Error in getRecentActivity:', err); next(err); }
+    try {
+        const { userId } = req.params;
+        if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
+        const userExists = await User.findById(userId).lean();
+        if (!userExists) return res.status(404).json({ status: 'fail', message: 'User not found' });
+        const limit = 10; // Fetch more items initially to get a mix
+        
+        // Fetch activities concurrently
+        const [quizAttempts, forumReplies, forumTopics, resourceAccess] = await Promise.all([
+            QuizAttempt.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).populate({ path: 'quiz', select: 'title subject', populate: { path: 'subject', select: 'name' } }).lean(),
+            ForumReply.find({ author: userId }).sort({ createdAt: -1 }).limit(limit).populate({ path: 'topic', select: 'title category', populate: { path: 'category', select: 'name' } }).lean(),
+            ForumTopic.find({ author: userId }).sort({ createdAt: -1 }).limit(limit).populate('category', 'name').lean(),
+            ResourceAccess.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).populate({ path: 'resource', select: 'title subject type', populate: { path: 'subject', select: 'name' } }).lean()
+        ]);
+        
+        // Format and combine activities
+        const activities = [
+            ...quizAttempts.map(a => ({ id: a._id.toString(), type: 'quiz', title: `Completed ${a.quiz?.title || 'a quiz'}`, subject: a.quiz?.subject?.name || 'General', details: `Score: ${a.percentageScore}%`, timestamp: a.createdAt.toISOString() })),
+            ...forumReplies.map(r => ({ id: r._id.toString(), type: 'forum', title: `Replied to "${r.topic?.title || 'a discussion'}"`, subject: r.topic?.category?.name || 'Forum', details: 'Forum Reply', timestamp: r.createdAt.toISOString() })),
+            ...forumTopics.map(t => ({ id: t._id.toString(), type: 'forum', title: `Created topic "${t.title}"`, subject: t.category?.name || 'Forum', details: 'New Topic', timestamp: t.createdAt.toISOString() })),
+            ...resourceAccess.map(acc => ({ id: acc._id.toString(), type: 'resource', title: `${(acc.accessType || 'viewed').replace(/^\w/, c => c.toUpperCase())} ${acc.resource?.title || 'a resource'}`, subject: acc.resource?.subject?.name || 'General', details: acc.resource?.type || 'Resource', timestamp: acc.createdAt.toISOString() }))
+        ]
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()) // Sort combined list
+        .slice(0, 10); // Limit overall total shown
+        
+        res.status(200).json({ status: 'success', results: activities.length, data: { activities } });
+    } catch (err) { 
+        console.error('[Backend Activity] Error in getRecentActivity:', err); 
+        next(err); 
+    }
 };
-
 
 /**
  * @desc     Get user leaderboard
@@ -330,17 +328,20 @@ exports.getRecentActivity = async (req, res, next) => {
  * @access   Public
  */
 exports.getLeaderboard = async (req, res, next) => {
-  try {
-    // Correctly parse limit from query or default to 20
-    const limit = parseInt(req.query.limit, 10) || 20;
-    if (isNaN(limit) || limit <= 0) { // Add validation for limit
-        return res.status(400).json({ status: 'fail', message: 'Invalid limit parameter.' });
-    }
+    try {
+        // Correctly parse limit from query or default to 20
+        const limit = parseInt(req.query.limit, 10) || 20;
+        if (isNaN(limit) || limit <= 0) { // Add validation for limit
+            return res.status(400).json({ status: 'fail', message: 'Invalid limit parameter.' });
+        }
 
-    const leaderboard = await User.find().select('name points level').sort({ points: -1 }).limit(limit).lean();
-    const rankedLeaderboard = leaderboard.map((user, index) => ({ id: user._id.toString(), name: user.name, points: user.points, level: user.level, rank: index + 1 }));
-    res.status(200).json({ status: 'success', results: rankedLeaderboard.length, data: { leaderboard: rankedLeaderboard } });
-  } catch (err) { console.error('[Backend] Error fetching leaderboard:', err); next(err); }
+        const leaderboard = await User.find().select('name points level').sort({ points: -1 }).limit(limit).lean();
+        const rankedLeaderboard = leaderboard.map((user, index) => ({ id: user._id.toString(), name: user.name, points: user.points, level: user.level, rank: index + 1 }));
+        res.status(200).json({ status: 'success', results: rankedLeaderboard.length, data: { leaderboard: rankedLeaderboard } });
+    } catch (err) { 
+        console.error('[Backend] Error fetching leaderboard:', err); 
+        next(err); 
+    }
 };
 
 /**
@@ -360,7 +361,7 @@ exports.updateUserProfile = async (req, res, next) => {
         const restrictedFields = [
             'password', 'role', 'xp', 'level', 'points', 'achievements', 'streak',
             'lastActive', 'passwordResetOtp', 'passwordResetExpires',
-            'quizCompletedCount', 'quizTotalPercentageScoreSum' // Protect aggregate fields too
+            'quizCompletedCount', 'quizTotalPercentageScoreSum', 'quizPointsEarned' // Protect aggregate fields too
         ];
         const updateData = { ...req.body };
         restrictedFields.forEach(field => delete updateData[field]); // Remove restricted fields
@@ -377,7 +378,6 @@ exports.updateUserProfile = async (req, res, next) => {
         if (!updatedUser) return res.status(404).json({ status: 'fail', message: 'User not found' });
 
         res.status(200).json({ status: 'success', data: { user: updatedUser } });
-
     } catch (err) {
         console.error("[Backend] Error updating user profile:", err);
         // Specific error for duplicate email
@@ -411,7 +411,7 @@ exports.getUserProfile = async (req, res, next) => {
         let selectFields = 'name level createdAt'; // Default public fields
         if (isOwnProfileOrAdmin) {
             // Add fields needed for private view, including aggregates, exclude sensitive ones
-            selectFields = '-password -passwordResetOtp -passwordResetExpires quizCompletedCount quizTotalPercentageScoreSum';
+            selectFields = '-password -passwordResetOtp -passwordResetExpires quizCompletedCount quizTotalPercentageScoreSum quizPointsEarned';
         }
 
         // Fetch user, include virtuals only for private view
@@ -422,7 +422,6 @@ exports.getUserProfile = async (req, res, next) => {
         if (!user) return res.status(404).json({ status: 'fail', message: 'User not found' });
 
         res.status(200).json({ status: 'success', data: { user } });
-
     } catch (err) {
         console.error("[Backend] Error fetching user profile:", err);
         next(err); // Pass error to handler

@@ -1,0 +1,29 @@
+// migrations/migration-registry.js
+const mongoose = require('mongoose');
+
+// Schema for tracking migrations
+const migrationSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  executedAt: { type: Date, default: Date.now },
+  description: String
+});
+
+const MigrationRegistry = mongoose.model('MigrationRegistry', migrationSchema);
+
+module.exports = {
+  // Check if a migration has already been executed
+  async isExecuted(id) {
+    const count = await MigrationRegistry.countDocuments({ id });
+    return count > 0;
+  },
+  
+  // Mark a migration as executed
+  async markAsExecuted(id, description = '') {
+    return MigrationRegistry.create({ id, description });
+  },
+  
+  // Get all executed migrations
+  async getExecuted() {
+    return MigrationRegistry.find().sort('executedAt');
+  }
+};
