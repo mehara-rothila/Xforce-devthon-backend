@@ -1,3 +1,4 @@
+// models/forumReplyModel.js
 const mongoose = require('mongoose');
 
 const forumReplySchema = new mongoose.Schema({
@@ -30,7 +31,16 @@ const forumReplySchema = new mongoose.Schema({
   downvotes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  }]
+  }],
+   // --- ADDED FIELDS ---
+  moderatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User' // Reference the User model
+  },
+  moderationDate: {
+    type: Date
+  }
+  // --- END ADDED FIELDS ---
 }, { timestamps: true });
 
 const ForumReply = mongoose.model('ForumReply', forumReplySchema);

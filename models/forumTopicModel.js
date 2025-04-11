@@ -1,3 +1,4 @@
+// models/forumTopicModel.js
 const mongoose = require('mongoose');
 
 const forumTopicSchema = new mongoose.Schema({
@@ -39,7 +40,16 @@ const forumTopicSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  lastReplyAt: Date
+  lastReplyAt: Date,
+  // --- ADDED FIELDS ---
+  moderatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User' // Reference the User model
+  },
+  moderationDate: {
+    type: Date
+  }
+  // --- END ADDED FIELDS ---
 }, { timestamps: true });
 
 const ForumTopic = mongoose.model('ForumTopic', forumTopicSchema);
