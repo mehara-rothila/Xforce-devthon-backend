@@ -1,7 +1,7 @@
 // models/quizModel.js
 const mongoose = require('mongoose');
 
-// Option Schema (CORRECTED - no _id: false)
+// Option Schema (Keep as is)
 const optionSchema = new mongoose.Schema({
   text: {
     type: String,
@@ -11,9 +11,9 @@ const optionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   }
-}); // Mongoose adds _id automatically
+});
 
-// Question Schema
+// Question Schema (Keep as is)
 const questionSchema = new mongoose.Schema({
   text: {
     type: String,
@@ -21,7 +21,6 @@ const questionSchema = new mongoose.Schema({
   },
   options: [optionSchema],
   correctAnswer: {
-    // This will store the _id string of the correct option
     type: String
   },
   explanation: {
@@ -44,7 +43,6 @@ const questionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  // Mongoose adds _id automatically
 });
 
 // Quiz Schema
@@ -93,60 +91,57 @@ const quizSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // --- RATING FIELDS (UPDATED) ---
   rating: {
     type: Number,
     default: 0,
     min: 0,
-    max: 5
+    max: 5,
+    // CORRECTED: Removed TypeScript type annotation
+    set: (val) => Math.round(val * 10) / 10
+  },
+  ratingsCount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  ratingsSum: {
+    type: Number,
+    default: 0,
+    min: 0
   }
+  // --- END RATING FIELDS ---
 }, {
   timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
+  toJSON: { virtuals: true, getters: true },
+  toObject: { virtuals: true, getters: true }
 });
 
-// --- NEW: Mongoose Pre-Save Hook to set correctAnswer ---
+// Pre-save hook for correctAnswer (Keep as is)
 quizSchema.pre('save', function(next) {
-  // 'this' refers to the quiz document being saved
-  // Run if questions array is modified or if it's a new document
   if (this.isModified('questions') || this.isNew) {
-    console.log(`Running pre-save hook for Quiz "${this.title}"`); // Debug log
+    // console.log(`Running pre-save hook for Quiz "${this.title}"`);
     this.questions.forEach((question, qIndex) => {
       if (question.options && Array.isArray(question.options) && question.options.length > 0) {
-        // Mongoose ensures options have _ids at this point (or assigns them upon save)
-        const correctOption = question.options.find(opt => opt.isCorrect === true); // Explicit check
-
+        const correctOption = question.options.find(opt => opt.isCorrect === true);
         if (correctOption && correctOption._id) {
-          // Found the correct option, set correctAnswer to its ID string
           question.correctAnswer = correctOption._id.toString();
-          // console.log(` -> Q ${qIndex + 1}: Set correctAnswer to ${question.correctAnswer}`);
         } else {
-          // No correct option found or marked - ensure correctAnswer is null
-          if (question.correctAnswer !== null) { // Only log if it changed
-              console.warn(` -> Q ${qIndex + 1} ("${question.text}"): No correct option marked or found. Setting correctAnswer to null.`);
-          }
           question.correctAnswer = null;
         }
       } else {
-        // No options array - ensure correctAnswer is null
-         if (question.correctAnswer !== null) { // Only log if it changed
-            console.warn(` -> Q ${qIndex + 1} ("${question.text}"): No options array found. Setting correctAnswer to null.`);
-         }
         question.correctAnswer = null;
       }
     });
   }
-  next(); // Continue with the save operation
+  next();
 });
-// --- End Hook ---
 
-
-// Virtual property for number of questions
+// Virtual properties (Keep as is)
 quizSchema.virtual('totalQuestions').get(function() {
   return this.questions?.length || 0;
 });
 
-// Virtual property for total possible points
 quizSchema.virtual('totalPoints').get(function() {
   if (!this.questions || this.questions.length === 0) {
     return 0;

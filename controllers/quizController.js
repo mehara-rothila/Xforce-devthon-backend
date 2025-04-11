@@ -373,11 +373,11 @@ exports.submitQuizAttempt = async (req, res, next) => {
           user: userId, quiz: quiz._id, answers: processedAnswers, score: score,
           totalPoints: totalPoints, percentageScore: percentageScore, passed: passed,
           timeTaken: timeTaken || null, pointsAwarded: pointsAwarded
+          // ratingGiven will default to null here
         });
-        attemptId = attempt._id;
+        attemptId = attempt._id; // Capture the ID of the saved attempt
         console.log(`Quiz attempt ${attemptId} saved for user ${userId}`);
 
-        // --- ADDED CONSOLE LOG 1 ---
         // Log the values *before* the update operation
         console.log(`[submitQuizAttempt] BEFORE UPDATE - Incrementing stats for user ${userId}: XP+=${xpAwarded}, Points+=${pointsAwarded}, QuizPoints+=${pointsAwarded}, Completed+=1, ScoreSum+=${percentageScore}`);
 
@@ -396,22 +396,18 @@ exports.submitQuizAttempt = async (req, res, next) => {
           { new: true } // Return the updated document
         );
 
-        // --- ADDED CONSOLE LOG 2 ---
         // Log the result *after* the update operation
         if (userUpdate) {
             console.log(`[submitQuizAttempt] AFTER UPDATE - User data: XP=${userUpdate.xp}, Points=${userUpdate.points}, QuizPoints=${userUpdate.quizPointsEarned}, Completed=${userUpdate.quizCompletedCount}, ScoreSum=${userUpdate.quizTotalPercentageScoreSum}`);
         } else {
             console.warn(`[submitQuizAttempt] AFTER UPDATE - User ${userId} not found during update. Stats not updated.`);
         }
-        // --- END ADDED CONSOLE LOGS ---
 
         if (!userUpdate) {
-          // This warning is now slightly redundant due to the log above, but keep it for clarity
           console.warn(`[submitQuizAttempt] User ${userId} not found during update. Stats not updated.`);
         } else {
           // Check for level up based on the updated XP
           const oldLevel = userUpdate.level;
-          // Ensure xp is treated as a number for calculation
           const currentXP = typeof userUpdate.xp === 'number' ? userUpdate.xp : 0;
           const newLevel = Math.floor(1 + Math.sqrt(currentXP / 100));
 
@@ -429,8 +425,6 @@ exports.submitQuizAttempt = async (req, res, next) => {
         }
       } catch (error) {
         console.error(`Error processing authenticated quiz attempt for user ${userId}:`, error);
-        // Consider how to handle this - should the user see an error?
-        // Maybe set a flag to indicate stat update failure in the response?
       }
     } else {
       console.log('Quiz submitted anonymously (no user authentication) OR req.user was missing.');
@@ -439,7 +433,8 @@ exports.submitQuizAttempt = async (req, res, next) => {
     // --- Prepare and Send Response ---
     // Ensure pointsAwarded and xpAwarded are included even if user update failed or was skipped
     const responseData = {
-      attemptId, score, totalPoints, percentageScore, passed, correctAnswers: correctCount,
+      attemptId, // Send the attemptId back to the frontend
+      score, totalPoints, percentageScore, passed, correctAnswers: correctCount,
       totalQuestions: quiz.questions.length, pointsAwarded, xpAwarded, achievements: achievementResults.awarded
     };
 
@@ -454,6 +449,152 @@ exports.submitQuizAttempt = async (req, res, next) => {
     if (!res.headersSent) next(error);
   }
 };
+
+
+/**
+ * @desc     Rate a quiz attempt
+ * @route    POST /api/quizzes/:quizId/rate
+ * @access   Private (Requires user login)
+ */
+exports.rateQuiz = async (req, res, next) => {
+  try {
+    const { quizId } = req.params;
+    const { rating, attemptId } = req.body; // Expect rating (1-5) and the specific attempt ID
+    const userId = req.user.id; // From protect middleware
+
+    // --- Validation ---
+    if (!mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({ status: 'fail', message: 'Invalid Quiz ID format.' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      return res.status(400).json({ status: 'fail', message: 'Invalid Attempt ID format.' });
+    }
+    if (!rating || typeof rating !== 'number' || rating < 1 || rating > 5) {
+      return res.status(400).json({ status: 'fail', message: 'Invalid rating value. Must be between 1 and 5.' });
+    }
+
+    // --- Authorization & Check if Already Rated ---
+    // Find the specific attempt the user wants to rate
+    const attempt = await QuizAttempt.findOne({
+      _id: attemptId,
+      user: userId,
+      quiz: quizId
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ status: 'fail', message: 'Quiz attempt not found or does not belong to you.' });
+    }
+
+    if (attempt.ratingGiven !== null) {
+      return res.status(400).json({ status: 'fail', message: 'You have already rated this quiz attempt.' });
+    }
+
+    // --- Update QuizAttempt ---
+    attempt.ratingGiven = rating;
+    await attempt.save();
+    console.log(`[rateQuiz] Updated ratingGiven to ${rating} for attempt ${attemptId}`);
+
+    // --- Update Quiz Aggregate Rating (Atomically) ---
+    // Fetch the quiz first to ensure it exists before trying to update aggregates
+    const quizToUpdate = await Quiz.findById(quizId);
+    if (!quizToUpdate) {
+        console.error(`[rateQuiz] Quiz ${quizId} not found for aggregate update.`);
+        // Still send success as the attempt was rated, but log the issue.
+         return res.status(200).json({
+            status: 'success',
+            message: 'Quiz rating submitted successfully (quiz aggregate not updated).',
+            data: { newAverageRating: null }
+        });
+    }
+
+    // Now perform the atomic increment and recalculate average
+    const updatedQuiz = await Quiz.findByIdAndUpdate(
+      quizId,
+      {
+        $inc: { ratingsCount: 1, ratingsSum: rating } // Increment count and sum
+      },
+      { new: true } // Get the updated quiz document
+    );
+
+     if (!updatedQuiz) {
+        console.error(`[rateQuiz] Failed to find quiz ${quizId} during aggregate update.`);
+        // Handle defensively
+         return res.status(200).json({
+            status: 'success',
+            message: 'Quiz rating submitted successfully (quiz aggregate failed update).',
+            data: { newAverageRating: null }
+        });
+    }
+
+    // Calculate and save the new average rating
+    const newAverage = (updatedQuiz.ratingsSum / updatedQuiz.ratingsCount);
+    updatedQuiz.rating = newAverage; // Let the setter in the model handle rounding
+    await updatedQuiz.save(); // Trigger the setter
+    console.log(`[rateQuiz] Updated quiz ${quizId} aggregate rating to ${updatedQuiz.rating} (${updatedQuiz.ratingsCount} ratings)`);
+
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Quiz rating submitted successfully.',
+      data: {
+          newAverageRating: updatedQuiz.rating // Send back the new average
+      }
+    });
+
+  } catch (error) {
+    console.error('Error submitting quiz rating:', error);
+    next(error);
+  }
+};
+
+
+/**
+ * @desc     Get a single quiz attempt by its ID
+ * @route    GET /api/attempts/:id  (Note: Route defined in quizRoutes.js)
+ * @access   Private (Requires user login and ownership or admin role)
+ */
+exports.getQuizAttemptById = async (req, res, next) => {
+    try {
+        const attemptId = req.params.id;
+        const userId = req.user.id; // From protect middleware
+
+        if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+            return res.status(400).json({ status: 'fail', message: 'Invalid Attempt ID format.' });
+        }
+
+        const attempt = await QuizAttempt.findById(attemptId)
+                                        .populate({ // Optionally populate quiz/subject if needed on results page again
+                                            path: 'quiz',
+                                            select: 'title subject',
+                                            populate: { path: 'subject', select: 'name' }
+                                        })
+                                        .lean(); // Use lean if no model methods needed after fetch
+
+        if (!attempt) {
+            return res.status(404).json({ status: 'fail', message: 'Quiz attempt not found.' });
+        }
+
+        // Authorization: Ensure the user owns this attempt or is an admin
+        if (attempt.user.toString() !== userId && req.user.role !== 'admin') {
+             return res.status(403).json({ status: 'fail', message: 'You do not have permission to view this attempt.' });
+        }
+
+        // Exclude sensitive or large fields if not needed by frontend
+        // delete attempt.answers; // Example: remove detailed answers if only rating is needed
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                attempt // Send the full attempt details, including ratingGiven
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching quiz attempt:', error);
+        next(error);
+    }
+};
+
 
 /**
  * @desc     Get quizzes for a specific subject
