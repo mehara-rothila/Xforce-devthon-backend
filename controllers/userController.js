@@ -16,8 +16,49 @@ const isValidObjectId = (id) => {
     return id && mongoose.Types.ObjectId.isValid(id);
 };
 
+/**
+ * Calculate XP needed for a specific level using the same formula that determines level from XP
+ * @param {number} level - The level to calculate XP for
+ * @returns {number} - The XP needed to reach this level
+ */
+function calculateXpForLevel(level) {
+    // Reverse the level calculation formula: Level = Math.floor(1 + Math.sqrt(xp / 100))
+    // Therefore: xp = 100 * (level - 1)²
+    // Ensure level is at least 1
+    const effectiveLevel = Math.max(1, level);
+    return 100 * Math.pow(effectiveLevel - 1, 2);
+}
+
+
+// --- Helper: Calculate Achievement Points ---
+async function calculateAchievementPoints(userId) {
+    try {
+        // Get the user's unlocked achievements
+        const user = await User.findById(userId).select('achievements').lean();
+        if (!user || !user.achievements || !user.achievements.length) {
+            return 0;
+        }
+
+        // Get the achievement documents to sum their points
+        const unlockedAchievements = await Achievement.find({
+            _id: { $in: user.achievements }
+        }).select('points').lean();
+
+        // Calculate the total points
+        const totalPoints = unlockedAchievements.reduce((sum, achievement) => {
+            // Ensure points field exists and is a number before adding
+            return sum + (typeof achievement.points === 'number' ? achievement.points : 0);
+        }, 0);
+
+        return totalPoints;
+    } catch (error) {
+        console.error(`Error calculating achievement points for user ${userId}:`, error);
+        return 0; // Return 0 in case of error
+    }
+}
+
+
 // --- Helper function to get Quiz Stats (Reads stored aggregates + calculates best score) ---
-// ***** MODIFIED TO MANUALLY CALCULATE AVG SCORE *****
 async function getQuizStats(userId) {
     try {
         console.log(`[getQuizStats] START for user ${userId}`);
@@ -25,8 +66,6 @@ async function getQuizStats(userId) {
         const user = await User.findById(userId)
                            .select('quizCompletedCount quizTotalPercentageScoreSum points quizPointsEarned') // Select necessary fields
                            .lean(); // Keep lean for performance
-
-        // console.log(`[getQuizStats] Fetched user data (lean):`, JSON.stringify(user, null, 2)); // Keep for debugging if needed
 
         if (!user) {
             console.warn(`[getQuizStats] User not found for ID ${userId}`);
@@ -61,7 +100,7 @@ async function getQuizStats(userId) {
             completed: count,                       // Use calculated count
             avgScore: calculatedAvgScore,           // Use manually calculated average
             pointsEarned: user.quizPointsEarned || 0,
-            totalPoints: user.points || 0,
+            totalPoints: user.points || 0, // Note: This is the user's *total* points, might be confusing here
             passed: 0,                              // Not calculated here to optimize
             failed: 0,                              // Not calculated here to optimize
             bestScore: bestScore,
@@ -73,7 +112,6 @@ async function getQuizStats(userId) {
         return { completed: 0, avgScore: 0, pointsEarned: 0, totalPoints: 0, passed: 0, failed: 0, bestScore: 0 };
     }
 }
-// ***** END OF MODIFICATION *****
 
 // --- Helper: getForumStats ---
 async function getForumStats(userId) {
@@ -140,6 +178,7 @@ function getRandomPastDate(minDaysAgo, maxDaysAgo) {
     return pastDate;
 }
 
+
 /**
  * @desc     Get summary data for the dashboard sidebar for a specific user
  * @route    GET /api/users/:userId/dashboard-summary
@@ -159,7 +198,7 @@ exports.getDashboardSummary = async (req, res, next) => {
         console.log(`[getDashboardSummary] START Fetching summary for userId: ${userId}`);
 
         // 1. Fetch Core User Data (Select fields needed directly here)
-        const user = await User.findById(userId).select('name level xp points quizPointsEarned streak subjects').lean();
+        const user = await User.findById(userId).select('name level xp points quizPointsEarned streak subjects achievements').lean();
 
         if (!user) {
             console.log("[getDashboardSummary] User not found, returning 404");
@@ -182,8 +221,25 @@ exports.getDashboardSummary = async (req, res, next) => {
         // 3. Calculate Points to Next Level
         const currentLevel = user.level || 1; // Default to 1 if missing
         const currentXP = user.xp || 0;
-        const xpForNextLevel = (currentLevel + 1) * 150; // Adjust formula if needed
+
+        // Get XP thresholds for current and next level using the correct formula
+        const xpForCurrentLevel = calculateXpForLevel(currentLevel);
+        const xpForNextLevel = calculateXpForLevel(currentLevel + 1);
+
+        // Calculate XP needed to level up
         const pointsToNextLevel = Math.max(0, xpForNextLevel - currentXP);
+
+        // Calculate progress percentage within current level
+        let levelProgress = 0;
+        const xpInLevel = xpForNextLevel - xpForCurrentLevel;
+        if (xpInLevel > 0) {
+            levelProgress = Math.min(100, Math.max(0,
+                ((currentXP - xpForCurrentLevel) / xpInLevel) * 100
+            ));
+        } else if (currentXP >= xpForCurrentLevel) {
+            levelProgress = 100; // Handle case where next level requires same XP (shouldn't happen with formula)
+        }
+
 
         // 4. Get additional stats using helper functions
         console.log(`[getDashboardSummary] Calling getQuizStats for ${userId}`);
@@ -192,10 +248,14 @@ exports.getDashboardSummary = async (req, res, next) => {
 
         const forumStats = await getForumStats(userId);
         const resourceStats = await getResourceStats(userId);
-        // Mock study stats - replace with real data if tracked
+
+        // Calculate achievement points specifically using the helper
+        const userAchievementPoints = await calculateAchievementPoints(userId);
+
+        // Other stats
         const studyStats = {
-            hours: Math.floor(Math.random() * 100) + 50,
-            lastSession: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000))
+            hours: Math.floor(Math.random() * 100) + 50, // Placeholder
+            lastSession: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000)) // Placeholder
         };
         const userRank = await getUserRank(userId);
 
@@ -205,14 +265,17 @@ exports.getDashboardSummary = async (req, res, next) => {
             level: currentLevel,
             xp: currentXP,
             pointsToNextLevel: pointsToNextLevel,
+            xpForNextLevel: xpForNextLevel,  // Included for correct XP display
+            levelProgress: levelProgress,     // Included for correct progress bar
             streak: user.streak || 0,
             points: user.points || 0,                         // Overall points from user doc
-            quizPointsEarned: user.quizPointsEarned || 0, // Specific quiz points field
+            quizPointsEarned: user.quizPointsEarned || 0,     // Specific quiz points field
+            achievementPoints: userAchievementPoints,         // Use calculated value
             leaderboardRank: userRank,
             subjectProgress: overallProgressPerSubject,
             quizStats: { // Use the results from getQuizStats directly
                 completed: quizStats.completed,
-                avgScore: quizStats.avgScore, // This now uses the manually calculated value
+                avgScore: quizStats.avgScore,
                 bestScore: quizStats.bestScore,
                 pointsEarned: quizStats.pointsEarned // Include quiz-specific points here too
             },
@@ -257,20 +320,20 @@ exports.getDetailedSubjectProgress = async (req, res, next) => {
         }
 
         // Map progress data with topic details from the populated subject
-        const detailedTopicProgress = progressDoc.topicProgress.map(tp => {
-            // Find the corresponding topic definition in the populated subject.topics array
-            const subjectTopic = progressDoc.subject.topics.find(st => st._id.equals(tp.topic));
-            return {
-                id: subjectTopic ? subjectTopic._id.toString() : tp.topic.toString(), // Use topic ID
-                name: subjectTopic ? subjectTopic.name : 'Unknown Topic', // Get name from subject
-                progress: tp.progress || 0,
-                mastery: tp.mastery || 'low'
+        const detailedTopicProgress = progressDoc.subject.topics.map(subjectTopic => {
+             // Find the corresponding progress entry for this topic
+             const topicProgressEntry = progressDoc.topicProgress.find(tp => tp.topic.equals(subjectTopic._id));
+             return {
+                 id: subjectTopic._id.toString(), // Use topic ID from subject
+                 name: subjectTopic.name,
+                 progress: topicProgressEntry?.progress || 0, // Default to 0 if no progress entry
+                 mastery: topicProgressEntry?.mastery || 'low' // Default to low
              };
-        }).sort((a, b) => { // Sort based on the original order in the Subject model
-            const topicA = progressDoc.subject.topics.find(st => st._id.toString() === a.id);
-            const topicB = progressDoc.subject.topics.find(st => st._id.toString() === b.id);
-            return (topicA?.order ?? Infinity) - (topicB?.order ?? Infinity);
-        });
+         }).sort((a, b) => { // Sort based on the original order in the Subject model
+             const topicA = progressDoc.subject.topics.find(st => st._id.toString() === a.id);
+             const topicB = progressDoc.subject.topics.find(st => st._id.toString() === b.id);
+             return (topicA?.order ?? Infinity) - (topicB?.order ?? Infinity);
+         });
 
         // Placeholder analytics - replace with real calculations if needed
         const analytics = {
@@ -297,7 +360,7 @@ exports.getDetailedSubjectProgress = async (req, res, next) => {
 };
 
 /**
- * @desc     Get all achievements, indicating which are unlocked by the user
+ * @desc     Get all achievements, indicating which are unlocked by the user AND the total points from unlocked ones
  * @route    GET /api/users/:userId/achievements
  * @access   Private (Should be protected)
  */
@@ -317,6 +380,9 @@ exports.getUserAchievements = async (req, res, next) => {
         const unlockedAchievementIds = new Set((user.achievements || []).map(id => id.toString()));
         const allAchievements = await Achievement.find({}).lean(); // Fetch all achievement definitions
 
+        // *** Use the helper function for consistent point calculation ***
+        const totalAchievementPoints = await calculateAchievementPoints(userId);
+
         // Map all achievements and add unlock status + mock date
         const userAchievementsData = allAchievements.map(ach => {
             const isUnlocked = unlockedAchievementIds.has(ach._id.toString());
@@ -327,19 +393,34 @@ exports.getUserAchievements = async (req, res, next) => {
                 icon: ach.icon || 'default-icon', // Provide default icon name
                 category: ach.category,
                 xp: ach.xp || 0,
-                points: ach.points || 0, // Include points
+                points: typeof ach.points === 'number' ? ach.points : 0, // Ensure points is a number or 0
                 rarity: ach.rarity || 'common',
                 unlocked: isUnlocked,
                 // TODO: Replace mock date with actual unlock date if stored
-                unlockedAt: isUnlocked ? getRandomPastDate(30, 180) : null
+                unlockedAt: isUnlocked ? getRandomPastDate(30, 180) : null,
+                // Include progress calculation if needed (using the helper from achievementController)
+                 progress: 0, // Placeholder - progress calculation might be complex here
+                 totalNeeded: ach.requirement || 1 // Placeholder
             };
         });
-        res.status(200).json({ status: 'success', results: userAchievementsData.length, data: { achievements: userAchievementsData } });
+
+        // TODO: Optionally calculate and add `progress` and `totalNeeded` to locked achievements here if needed,
+        // potentially reusing logic from `calculateAchievementProgress` in achievementController.
+
+        res.status(200).json({
+            status: 'success',
+            results: userAchievementsData.length,
+            data: {
+                achievements: userAchievementsData,
+                totalAchievementPoints: totalAchievementPoints // Return the calculated total points
+            }
+        });
     } catch (err) {
         console.error("[Backend] Error in getUserAchievements:", err);
         next(err);
     }
 };
+
 
 /**
  * @desc     Get user's recent activity
