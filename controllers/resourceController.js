@@ -1,4 +1,4 @@
-// /controllers/resourceController.js
+// controllers/resourceController.js
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
@@ -372,23 +372,14 @@ exports.downloadResource = async (req, res, next) => {
   try {
     const resource = await Resource.findById(req.params.id);
 
-    if (!resource || !resource.isActive) {
-      return res.status(404).json({ status: 'fail', message: 'Resource or file not found' });
+    if (!resource || !resource.filePath) {
+      return res.status(404).json({ status: 'fail', message: 'Resource or file path not found' });
     }
 
-    if (!resource.filePath) {
-      return res.status(404).json({ status: 'fail', message: 'Resource file path not found' });
-    }
-
-    // Premium Check
+    // Premium Check (Placeholder)
     if (resource.premium) {
-      // Check if user has premium access
-      if (!req.user || (req.user.role !== 'premium' && req.user.role !== 'admin')) {
-        return res.status(403).json({ 
-          status: 'fail', 
-          message: 'This is a premium resource. Upgrade to access premium content.' 
-        });
-      }
+      console.log("Premium resource download attempt.");
+      // Add real check: if (!req.user || !req.user.isPremium) return res.status(403).json(...);
     }
 
     const physicalPath = path.join(process.cwd(), 'public', resource.filePath);
@@ -403,7 +394,7 @@ exports.downloadResource = async (req, res, next) => {
     resource.downloads = (resource.downloads || 0) + 1;
     await resource.save({ validateBeforeSave: false });
     
-    // Log the access
+    // Log the access (new code)
     if (req.user && req.user.id) {
       await ResourceAccess.create({
         user: req.user.id,
@@ -412,14 +403,8 @@ exports.downloadResource = async (req, res, next) => {
       });
     }
 
-    // Get filename and set Content-Disposition header
-    const filename = path.basename(resource.filePath);
-    
-    // Set appropriate headers for file download
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    
     // Send File
+    const filename = path.basename(resource.filePath);
     res.download(physicalPath, filename, (err) => {
         if (err) {
             console.error(`Error sending file ${physicalPath}:`, err);
@@ -461,15 +446,13 @@ exports.getStudyMaterials = async (req, res, next) => {
     const resources = await Resource.find(queryObj).sort('-date');
 
     const studyMaterials = resources.map(resource => ({
-      _id: resource._id,
       id: resource._id,
       title: resource.title,
       type: resource.type,
       downloadCount: resource.downloads,
       fileSize: resource.size,
       lastUpdated: getTimeAgo(resource.updatedAt || resource.date),
-      isPremium: resource.premium,
-      filePath: resource.filePath
+      isPremium: resource.premium
     }));
 
     res.status(200).json({
