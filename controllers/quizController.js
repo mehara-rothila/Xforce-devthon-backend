@@ -696,10 +696,16 @@ exports.getPracticeQuizzes = async (req, res, next) => {
     const practiceQuizzes = quizzes.map(quiz => {
       const userAttempt = userAttemptsMap.get(quiz._id.toString()); // Get latest attempt for this quiz
 
+      // --- FIX START ---
+      // Calculate question count reliably: Use virtual, fallback to array length
+      const questionCount = quiz.totalQuestions || (quiz.questions ? quiz.questions.length : 0);
+      // --- FIX END ---
+
       return {
         id: quiz._id,
         title: quiz.title,
-        questions: quiz.totalQuestions || 0, // Use virtual totalQuestions
+        // Use the reliably calculated count here
+        questions: questionCount, // <--- UPDATED LINE
         difficulty: quiz.difficulty,
         timeEstimate: quiz.timeLimit ? `${quiz.timeLimit} min` : 'N/A',
         attempts: quiz.attempts || 0,
