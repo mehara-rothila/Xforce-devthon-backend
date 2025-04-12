@@ -1,4 +1,3 @@
-// Auth controller 
 // controllers/authController.js
 
 // --- Dependencies ---
@@ -7,7 +6,9 @@ const bcrypt = require('bcryptjs');
 const validator = require('validator');
 const crypto = require('crypto');
 const User = require('../models/userModel'); // Adjust path if needed
+const DailyActivityLog = require('../models/dailyActivityLogModel'); // *** ADD THIS ***
 const sendEmail = require('../utils/email'); // Uses the updated email utility
+const { startOfDay, subDays, isSameDay } = require('date-fns'); // *** ADD date-fns ***
 
 // --- Email Template (Password Reset) ---
 const PASSWORD_RESET_TEMPLATE = `
@@ -20,13 +21,12 @@ const PASSWORD_RESET_TEMPLATE = `
 
 // --- Helper function to sign JWT token ---
 const signToken = (id) => {
-    // ... (keep existing signToken function) ...
     if (!process.env.JWT_SECRET || !process.env.JWT_EXPIRES_IN) {
       console.error("FATAL ERROR: JWT_SECRET or JWT_EXPIRES_IN is not defined in .env file.");
-  }
-  const secret = process.env.JWT_SECRET || 'fallback-insecure-secret';
-  const expiresIn = process.env.JWT_EXPIRES_IN || '1d';
-  return jwt.sign({ id }, secret, { expiresIn });
+    }
+    const secret = process.env.JWT_SECRET || 'fallback-insecure-secret';
+    const expiresIn = process.env.JWT_EXPIRES_IN || '1d'; // Consider a shorter duration for production
+    return jwt.sign({ id }, secret, { expiresIn });
 };
 
 // --- Controller Functions ---
@@ -37,67 +37,82 @@ const signToken = (id) => {
  * @access  Public
  */
 exports.register = async (req, res, next) => {
-    // ... (keep existing register function) ...
     try {
-    const { name, email, password, passwordConfirm } = req.body;
-    console.log('[Backend] Registration attempt received:', { name, email });
+        const { name, email, password, passwordConfirm } = req.body;
+        console.log('[Backend] Registration attempt received:', { name, email });
 
-    // 1. Validate Input
-    if (!name || !email || !password || !passwordConfirm) {
-      return res.status(400).json({ status: 'fail', message: 'Please provide name, email, password, and confirm password.' });
-    }
-    if (!validator.isEmail(email)) {
-      return res.status(400).json({ status: 'fail', message: 'Please provide a valid email address.' });
-    }
-    if (password !== passwordConfirm) {
-      return res.status(400).json({ status: 'fail', message: 'Passwords do not match.' });
-    }
-     if (password.length < 8) {
-       return res.status(400).json({ status: 'fail', message: 'Password must be at least 8 characters long.' });
-    }
+        // 1. Validate Input
+        if (!name || !email || !password || !passwordConfirm) {
+          return res.status(400).json({ status: 'fail', message: 'Please provide name, email, password, and confirm password.' });
+        }
+        if (!validator.isEmail(email)) {
+          return res.status(400).json({ status: 'fail', message: 'Please provide a valid email address.' });
+        }
+        if (password !== passwordConfirm) {
+          return res.status(400).json({ status: 'fail', message: 'Passwords do not match.' });
+        }
+         if (password.length < 8) {
+           return res.status(400).json({ status: 'fail', message: 'Password must be at least 8 characters long.' });
+        }
 
-    // 2. Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ status: 'fail', message: 'Email already exists. Please log in or use a different email.' });
-    }
+        // 2. Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+          return res.status(400).json({ status: 'fail', message: 'Email already exists. Please log in or use a different email.' });
+        }
 
-    // 3. Hash password (Assuming NO password hashing middleware in User model)
-    const hashedPassword = await bcrypt.hash(password, 12);
+        // 3. Hash password
+        const hashedPassword = await bcrypt.hash(password, 12);
 
-    // 4. Create new user
-    const newUser = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-    });
-    newUser.password = undefined; // Ensure password isn't returned
-    console.log('[Backend] User created successfully:', newUser._id);
+        // 4. Create new user
+        const newUser = await User.create({
+          name,
+          email,
+          password: hashedPassword,
+          lastActive: new Date() // Set initial lastActive
+        });
+        newUser.password = undefined;
+        console.log('[Backend] User created successfully:', newUser._id);
 
-    // 5. Generate JWT Token
-    const token = signToken(newUser._id);
-    console.log('[Backend] JWT Token generated for new user');
+        // *** ADD: Log first activity for new user ***
+        try {
+            const todayUTC = startOfDay(new Date()); // Get start of today UTC
+            await DailyActivityLog.findOneAndUpdate(
+                { user: newUser._id, date: todayUTC },
+                { $set: { lastTimestamp: new Date() } }, // Update timestamp if somehow exists
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+            console.log(`[Backend] Logged first activity for new user ${newUser._id} on ${todayUTC.toISOString().split('T')[0]}`);
+        } catch (logError) {
+            console.error(`[Backend] Error logging first activity for user ${newUser._id}:`, logError);
+            // Don't fail registration if logging fails
+        }
+        // *** END ADD ***
 
-    // 6. Send Response
-    res.status(201).json({
-      status: 'success',
-      token,
-      data: { user: newUser },
-    });
+        // 5. Generate JWT Token
+        const token = signToken(newUser._id);
+        console.log('[Backend] JWT Token generated for new user');
 
-  } catch (err) {
-    console.error("[Backend] Error during registration:", err);
-    if (!res.headersSent) {
-         if (err.name === 'ValidationError') {
-             const errors = Object.values(err.errors).map(el => el.message);
-             const message = `Invalid input data. ${errors.join('. ')}`;
-             return res.status(400).json({ status: 'fail', message });
-         }
-         res.status(500).json({ status: 'error', message: 'Registration failed due to a server error.' });
-    } else {
-        console.error("[Backend] Headers already sent for registration error.");
-    }
-  }
+        // 6. Send Response
+        res.status(201).json({
+          status: 'success',
+          token,
+          data: { user: newUser },
+        });
+
+      } catch (err) {
+        console.error("[Backend] Error during registration:", err);
+        if (!res.headersSent) {
+             if (err.name === 'ValidationError') {
+                 const errors = Object.values(err.errors).map(el => el.message);
+                 const message = `Invalid input data. ${errors.join('. ')}`;
+                 return res.status(400).json({ status: 'fail', message });
+             }
+             res.status(500).json({ status: 'error', message: 'Registration failed due to a server error.' });
+        } else {
+            console.error("[Backend] Headers already sent for registration error.");
+        }
+      }
 };
 
 /**
@@ -106,45 +121,104 @@ exports.register = async (req, res, next) => {
  * @access  Public
  */
 exports.login = async (req, res, next) => {
-    // ... (keep existing login function) ...
      try {
-    const { email, password } = req.body;
-    console.log('[Backend] Login attempt received:', { email });
+        const { email, password } = req.body;
+        console.log('[Backend] Login attempt received:', { email });
 
-    // 1. Validate Input
-    if (!email || !password) {
-      return res.status(400).json({ status: 'fail', message: 'Please provide email and password.' });
-    }
+        // 1. Validate Input
+        if (!email || !password) {
+          return res.status(400).json({ status: 'fail', message: 'Please provide email and password.' });
+        }
 
-    // 2. Check if user exists & get password (select explicitly)
-    const user = await User.findOne({ email }).select('+password');
+        // 2. Check if user exists & get password + streak info
+        // *** MODIFIED: Select streak and lastActive ***
+        const user = await User.findOne({ email }).select('+password +streak +lastActive');
 
-    // 3. Check password validity
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ status: 'fail', message: 'Incorrect email or password.' }); // 401 Unauthorized
-    }
-    console.log('[Backend] User found and password verified:', user._id);
+        // 3. Check password validity
+        if (!user || !(await bcrypt.compare(password, user.password))) {
+          return res.status(401).json({ status: 'fail', message: 'Incorrect email or password.' });
+        }
+        console.log('[Backend] User found and password verified:', user._id);
 
-    // 4. Generate JWT Token
-    const token = signToken(user._id);
-    console.log('[Backend] JWT Token generated for logged in user');
+        // *** ADD: Daily Activity Logging & Streak Calculation ***
+        const now = new Date();
+        const todayUTCStart = startOfDay(now); // Start of today in UTC
+        const yesterdayUTCStart = startOfDay(subDays(now, 1)); // Start of yesterday in UTC
 
-    // 5. Send Response
-    user.password = undefined; // Remove password from output
-    res.status(200).json({
-      status: 'success',
-      token,
-      data: { user },
-    });
+        try {
+            // Log today's activity (upsert ensures only one entry per day)
+            // Use the normalized date for the query condition
+            const activityLog = await DailyActivityLog.findOneAndUpdate(
+                { user: user._id, date: todayUTCStart },
+                { $set: { lastTimestamp: now } }, // Update timestamp
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+            console.log(`[Backend] Logged/Updated activity for user ${user._id} on ${todayUTCStart.toISOString().split('T')[0]}`);
 
-  } catch (err) {
-    console.error("[Backend] Error during login:", err);
-    if (!res.headersSent) {
-      res.status(500).json({ status: 'error', message: 'Login failed due to a server error.' });
-    } else {
-        console.error("[Backend] Headers already sent for login error.");
-    }
-  }
+            // Check if user was active yesterday for streak calculation
+            const wasActiveYesterday = await DailyActivityLog.findOne({
+                user: user._id,
+                date: yesterdayUTCStart
+            });
+
+            let newStreak = user.streak || 0;
+            // Get the start of the day for the lastActive date stored in the User model
+            const lastActiveDateStart = user.lastActive ? startOfDay(user.lastActive) : null;
+
+            // Check if the last recorded activity in the User model was NOT today
+            // This prevents incrementing the streak multiple times on the same day
+            if (!lastActiveDateStart || !isSameDay(todayUTCStart, lastActiveDateStart)) {
+                if (wasActiveYesterday) {
+                    // Active yesterday, increment streak
+                    newStreak++;
+                    console.log(`[Backend] User ${user._id} was active yesterday. Incrementing streak to ${newStreak}`);
+                } else {
+                    // Not active yesterday, reset streak to 1 (for today's activity)
+                    newStreak = 1;
+                    console.log(`[Backend] User ${user._id} was NOT active yesterday. Resetting streak to 1.`);
+                }
+                // Update user's streak and lastActive timestamp in the User model
+                user.streak = newStreak;
+                user.lastActive = now; // Update lastActive to the current time
+                await user.save({ validateBeforeSave: false }); // Save updated streak/lastActive
+            } else {
+                 console.log(`[Backend] User ${user._id} already marked active today. Streak remains ${user.streak}.`);
+                 // Optionally update lastActive anyway if you want to track the *latest* login time
+                 // user.lastActive = now;
+                 // await user.save({ validateBeforeSave: false });
+            }
+
+        } catch (logError) {
+            console.error(`[Backend] Error logging activity or calculating streak for user ${user._id}:`, logError);
+            // Don't fail login if logging/streak fails
+        }
+        // *** END ADD ***
+
+
+        // 4. Generate JWT Token
+        const token = signToken(user._id);
+        console.log('[Backend] JWT Token generated for logged in user');
+
+        // 5. Send Response
+        user.password = undefined; // Remove password from output
+        // Ensure the user object sent back has the potentially updated streak
+        const userResponseData = user.toObject(); // Convert to plain object if needed
+        delete userResponseData.password; // Ensure password is removed again if toObject includes it
+
+        res.status(200).json({
+          status: 'success',
+          token,
+          data: { user: userResponseData }, // Send back user data
+        });
+
+      } catch (err) {
+        console.error("[Backend] Error during login:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ status: 'error', message: 'Login failed due to a server error.' });
+        } else {
+            console.error("[Backend] Headers already sent for login error.");
+        }
+      }
 };
 
 /**
@@ -153,85 +227,62 @@ exports.login = async (req, res, next) => {
  * @access  Public
  */
 exports.forgotPassword = async (req, res, next) => {
-    // ... (keep existing forgotPassword function) ...
     try {
-    // 1. Get user based on POSTed email
-    const { email } = req.body;
-    if (!email || !validator.isEmail(email)) {
-        return res.status(400).json({ status: 'fail', message: 'Please provide a valid email address.' });
-    }
-    console.log(`[Backend] Forgot password request for email: ${email}`);
-
-    const user = await User.findOne({ email });
-    if (!user) {
-      // Prevent user enumeration
-      console.log(`[Backend] User not found for email ${email}, sending generic success response.`);
-      return res.status(200).json({ status: 'success', message: 'If an account with that email exists, an OTP has been sent.' });
-    }
-
-    // 2. Generate random OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
-    console.log(`[Backend] Generated OTP for ${email}: ${otp}`); // Log OTP only in dev/debug
-
-    // 3. Hash OTP and set expiry (15 minutes, matching template)
-    const hashedOtp = await bcrypt.hash(otp, 10);
-    const otpExpires = Date.now() + 15 * 60 * 1000; // <-- Changed to 15 minutes
-
-    // 4. Save hashed OTP and expiry to user document
-    user.passwordResetOtp = hashedOtp;
-    user.passwordResetExpires = new Date(otpExpires);
-    await user.save({ validateBeforeSave: false });
-    console.log(`[Backend] Hashed OTP and expiry saved for user ${user._id}`);
-
-    // 5. Send the PLAIN OTP via email using the HTML template
-    try {
-        await sendEmail({
-            email: user.email,
-            subject: 'Your Password Reset OTP (Valid for 15 min)',
-            // text: `Your password reset OTP is: ${otp}`, // Optional fallback text
-            htmlContent: PASSWORD_RESET_TEMPLATE, // Pass the HTML template
-            replacements: { // Pass data to replace placeholders
-                email: user.email,
-                otp: otp // Send the plain OTP to be displayed in the email
-            }
-        });
-    } catch (emailError) {
-        console.error("[Backend] Email sending failed via Brevo:", emailError);
-        // Clear OTP fields if email fails, so user can try again
-        user.passwordResetOtp = undefined;
-        user.passwordResetExpires = undefined;
-        await user.save({ validateBeforeSave: false });
-        console.log(`[Backend] Cleared OTP fields for ${user.email} after email sending error.`);
-        return res.status(500).json({ status: 'error', message: 'Failed to send password reset email. Please try again.' });
-    }
-
-    // 6. Send success response to frontend
-    res.status(200).json({ status: 'success', message: 'An OTP has been sent to your email address.' });
-
-  } catch (err) {
-    console.error("[Backend] General error in forgotPassword:", err);
-    // Attempt cleanup if possible
-     try {
-        // Find user again only if needed and error wasn't email sending
-        if (!err.message?.includes('Email could not be sent')) {
-             const userToClean = await User.findOne({ email: req.body.email }).select('+passwordResetOtp'); // Select fields to check if they exist
-             if (userToClean && userToClean.passwordResetOtp) { // Only clean if OTP was potentially set
-                userToClean.passwordResetOtp = undefined;
-                userToClean.passwordResetExpires = undefined;
-                await userToClean.save({ validateBeforeSave: false });
-                console.log(`[Backend] Cleaned OTP fields for ${req.body.email} after general error.`);
-             }
+        const { email } = req.body;
+        if (!email || !validator.isEmail(email)) {
+            return res.status(400).json({ status: 'fail', message: 'Please provide a valid email address.' });
         }
-     } catch (cleanupError) {
-         console.error("[Backend] Error cleaning up OTP fields after forgotPassword general error:", cleanupError);
-     }
-
-    if (!res.headersSent) {
-      res.status(500).json({ status: 'error', message: 'An unexpected error occurred. Please try again.' });
-    } else {
-        console.error("[Backend] Headers already sent for forgotPassword general error.");
-    }
-  }
+        console.log(`[Backend] Forgot password request for email: ${email}`);
+        const user = await User.findOne({ email });
+        if (!user) {
+          console.log(`[Backend] User not found for email ${email}, sending generic success response.`);
+          return res.status(200).json({ status: 'success', message: 'If an account with that email exists, an OTP has been sent.' });
+        }
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        console.log(`[Backend] Generated OTP for ${email}: ${otp}`); // Log OTP only in dev/debug
+        const hashedOtp = await bcrypt.hash(otp, 10);
+        const otpExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
+        user.passwordResetOtp = hashedOtp;
+        user.passwordResetExpires = new Date(otpExpires);
+        await user.save({ validateBeforeSave: false });
+        console.log(`[Backend] Hashed OTP and expiry saved for user ${user._id}`);
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'Your Password Reset OTP (Valid for 15 min)',
+                htmlContent: PASSWORD_RESET_TEMPLATE,
+                replacements: { email: user.email, otp: otp }
+            });
+        } catch (emailError) {
+            console.error("[Backend] Email sending failed via Brevo:", emailError);
+            user.passwordResetOtp = undefined;
+            user.passwordResetExpires = undefined;
+            await user.save({ validateBeforeSave: false });
+            console.log(`[Backend] Cleared OTP fields for ${user.email} after email sending error.`);
+            return res.status(500).json({ status: 'error', message: 'Failed to send password reset email. Please try again.' });
+        }
+        res.status(200).json({ status: 'success', message: 'An OTP has been sent to your email address.' });
+      } catch (err) {
+        console.error("[Backend] General error in forgotPassword:", err);
+         try {
+            if (!err.message?.includes('Email could not be sent')) {
+                 const userToClean = await User.findOne({ email: req.body.email }).select('+passwordResetOtp');
+                 if (userToClean && userToClean.passwordResetOtp) {
+                    userToClean.passwordResetOtp = undefined;
+                    userToClean.passwordResetExpires = undefined;
+                    await userToClean.save({ validateBeforeSave: false });
+                    console.log(`[Backend] Cleaned OTP fields for ${req.body.email} after general error.`);
+                 }
+            }
+         } catch (cleanupError) {
+             console.error("[Backend] Error cleaning up OTP fields after forgotPassword general error:", cleanupError);
+         }
+        if (!res.headersSent) {
+          res.status(500).json({ status: 'error', message: 'An unexpected error occurred. Please try again.' });
+        } else {
+            console.error("[Backend] Headers already sent for forgotPassword general error.");
+        }
+      }
 };
 
 /**
@@ -240,12 +291,9 @@ exports.forgotPassword = async (req, res, next) => {
  * @access  Public
  */
 exports.resetPassword = async (req, res, next) => {
-    // ... (keep existing resetPassword function) ...
      try {
         const { email, otp, password, passwordConfirm } = req.body;
         console.log(`[Backend] Reset password attempt for email: ${email}`);
-
-        // 1. Validate Input
         if (!email || !otp || !password || !passwordConfirm) {
             return res.status(400).json({ status: 'fail', message: 'Please provide email, OTP, new password, and confirmation.' });
         }
@@ -258,66 +306,39 @@ exports.resetPassword = async (req, res, next) => {
         if (password.length < 8) {
             return res.status(400).json({ status: 'fail', message: 'New password must be at least 8 characters long.' });
         }
-         // Basic OTP format check - adjust if your OTP format differs
         if (!/^\d{6}$/.test(otp)) {
             return res.status(400).json({ status: 'fail', message: 'Invalid OTP format. Please enter the 6-digit code.' });
         }
-
-        // 2. Find user by email and select OTP fields
         const user = await User.findOne({ email }).select('+passwordResetOtp +passwordResetExpires');
-
-        // 3. Check if user exists, OTP exists, and OTP has not expired
         if (!user || !user.passwordResetOtp || !user.passwordResetExpires) {
             console.log(`[Backend] Reset Failed: User not found or no OTP data for ${email}`);
-            return res.status(400).json({ status: 'fail', message: 'Invalid OTP or email address.' }); // Generic message
+            return res.status(400).json({ status: 'fail', message: 'Invalid OTP or email address.' });
         }
-
         if (user.passwordResetExpires < Date.now()) {
             console.log(`[Backend] Reset Failed: OTP expired for ${email}`);
-             // Clear expired OTP fields here too
             user.passwordResetOtp = undefined;
             user.passwordResetExpires = undefined;
             await user.save({ validateBeforeSave: false });
             return res.status(400).json({ status: 'fail', message: 'OTP has expired. Please request a new one.' });
         }
-
-        // 4. Verify the submitted OTP against the stored hash
         const isOtpValid = await bcrypt.compare(otp, user.passwordResetOtp);
-
         if (!isOtpValid) {
             console.log(`[Backend] Reset Failed: Invalid OTP for ${email}`);
-            return res.status(400).json({ status: 'fail', message: 'Invalid OTP or email address.' }); // Generic message
+            return res.status(400).json({ status: 'fail', message: 'Invalid OTP or email address.' });
         }
-
-        // 5. If OTP is valid: Hash the new password
         const hashedNewPassword = await bcrypt.hash(password, 12);
-
-        // 6. Update user's password
         user.password = hashedNewPassword;
-
-        // 7. Clear the OTP fields (IMPORTANT!)
         user.passwordResetOtp = undefined;
         user.passwordResetExpires = undefined;
-
-        // 8. Save the updated user document
-        await user.save(); // Let Mongoose run full validation this time
+        await user.save();
         console.log(`[Backend] Password successfully reset for user ${user._id}`);
-
-        // 9. Generate a new JWT token to log the user in automatically
         const token = signToken(user._id);
         console.log('[Backend] JWT Token generated after password reset');
-
-        // 10. Send success response with the new token
-        user.password = undefined; // Ensure password isn't sent back
+        user.password = undefined;
         res.status(200).json({
-            status: 'success',
-            token, // Send token to log user in
-            message: 'Password has been reset successfully!', // Include success message
-            data: {
-                user // Send back updated user data (optional)
-            }
+            status: 'success', token, message: 'Password has been reset successfully!',
+            data: { user }
         });
-
     } catch (err) {
         console.error("[Backend] Error during password reset:", err);
         if (!res.headersSent) {
@@ -340,35 +361,20 @@ exports.resetPassword = async (req, res, next) => {
  * @access  Private (Requires protect middleware)
  */
 exports.getMe = async (req, res, next) => {
-    // This function relies on the 'protect' middleware running first
-    // and attaching user information (like ID) to req.user
-    console.log(`[Backend] /api/auth/me endpoint hit`);
-
-    // The 'protect' middleware should have already added req.user.id
+    // console.log(`[Backend] /api/auth/me endpoint hit`);
     if (!req.user || !req.user.id) {
         console.error('[Backend] getMe Error: req.user not found. Is protect middleware running before this route?');
-        // This case should ideally be caught by the protect middleware itself,
-        // but added here as a safeguard.
         return res.status(401).json({ status: 'fail', message: 'Not authorized. Please log in again.' });
     }
-
     try {
-        // Fetch the user from the database using the ID from the token/middleware
-        // Exclude sensitive fields like password, OTP fields etc.
         const currentUser = await User.findById(req.user.id).select('-passwordResetOtp -passwordResetExpires');
-
         if (!currentUser) {
-            // This might happen if the user was deleted after the token was issued
             console.log(`[Backend] getMe: User with ID ${req.user.id} not found.`);
             return res.status(404).json({ status: 'fail', message: 'User not found.' });
         }
-
-        // Send back the user data (password is not selected by default due to schema)
         res.status(200).json({
             status: 'success',
-            data: {
-                user: currentUser // Send relevant user details
-            }
+            data: { user: currentUser }
         });
     } catch(err) {
         console.error("[Backend] Error fetching user in getMe:", err);
@@ -377,5 +383,3 @@ exports.getMe = async (req, res, next) => {
         }
     }
 };
-
-// Ensure no other 'module.exports = ...' assignments overwrite these.

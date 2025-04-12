@@ -2,14 +2,16 @@
 const User = require('../models/userModel');
 const UserProgress = require('../models/userProgressModel');
 const Subject = require('../models/subjectModel');
-const Achievement = require('../models/achievementModel'); // Needed for achievement logic
+const Achievement = require('../models/achievementModel');
 const ForumReply = require('../models/forumReplyModel');
 const ForumTopic = require('../models/forumTopicModel');
 const Quiz = require('../models/quizModel');
 const QuizAttempt = require('../models/quizAttemptModel');
 const ResourceAccess = require('../models/resourceAccessModel');
+const DailyActivityLog = require('../models/dailyActivityLogModel'); // *** ADD THIS ***
 const mongoose = require('mongoose');
 const validator = require('validator');
+const { startOfMonth, endOfMonth, format } = require('date-fns'); // *** ADD date-fns ***
 
 // --- Helper function to check if an ID is valid ---
 const isValidObjectId = (id) => {
@@ -28,19 +30,12 @@ function calculateXpForLevel(level) {
 
 
 // --- Helper: Calculate Achievement Points ---
-// (This helper is now used by the corrected getUserAchievements below)
 async function calculateAchievementPoints(userId) {
     try {
         const user = await User.findById(userId).select('achievements').lean();
-        if (!user || !user.achievements || !user.achievements.length) {
-            return 0;
-        }
-        const unlockedAchievements = await Achievement.find({
-            _id: { $in: user.achievements }
-        }).select('points').lean();
-        const totalPoints = unlockedAchievements.reduce((sum, achievement) => {
-            return sum + (typeof achievement.points === 'number' ? achievement.points : 0);
-        }, 0);
+        if (!user || !user.achievements || !user.achievements.length) { return 0; }
+        const unlockedAchievements = await Achievement.find({ _id: { $in: user.achievements } }).select('points').lean();
+        const totalPoints = unlockedAchievements.reduce((sum, ach) => sum + (typeof ach.points === 'number' ? ach.points : 0), 0);
         return totalPoints;
     } catch (error) {
         console.error(`Error calculating achievement points for user ${userId}:`, error);
@@ -49,43 +44,32 @@ async function calculateAchievementPoints(userId) {
 }
 
 // --- Helper: Calculate Achievement Progress (Example Placeholder) ---
-// (This helper is now used by the corrected getUserAchievements below)
 async function calculateAchievementProgress(userId, achievement) {
   try {
     switch (achievement.trigger) {
       case 'quiz_perfect_score':
-        const perfectScores = await QuizAttempt.countDocuments({ user: userId, percentageScore: 100 });
-        return perfectScores;
+        return await QuizAttempt.countDocuments({ user: userId, percentageScore: 100 });
       case 'quiz_completion':
         let query = { user: userId };
-        if (achievement.condition) {
-          if (achievement.condition.passed) query.passed = true;
-          if (achievement.condition.minScore) query.percentageScore = { $gte: achievement.condition.minScore };
-        }
-        const completions = await QuizAttempt.countDocuments(query);
-        return completions;
+        if (achievement.condition?.passed) query.passed = true;
+        if (achievement.condition?.minScore) query.percentageScore = { $gte: achievement.condition.minScore };
+        return await QuizAttempt.countDocuments(query);
       case 'quiz_points':
         const userPoints = await User.findById(userId).select('quizPointsEarned').lean();
-        return userPoints ? userPoints.quizPointsEarned : 0;
+        return userPoints?.quizPointsEarned || 0;
       case 'forum_posts':
-        if (!ForumTopic) { console.warn("ForumTopic model not available for progress calculation."); return 0; }
         return await ForumTopic.countDocuments({ author: userId });
       case 'forum_replies':
-        if (!ForumReply) { console.warn("ForumReply model not available for progress calculation."); return 0; }
         return await ForumReply.countDocuments({ author: userId });
       case 'forum_best_answers':
-        if (!ForumReply) { console.warn("ForumReply model not available for progress calculation."); return 0; }
         return await ForumReply.countDocuments({ author: userId, isBestAnswer: true });
       case 'resource_access':
-        if (!ResourceAccess) { console.warn("ResourceAccess model not available for progress calculation."); return 0; }
         const resourceQuery = { user: userId };
-        if (achievement.condition && achievement.condition.accessType) {
-          resourceQuery.accessType = achievement.condition.accessType;
-        }
+        if (achievement.condition?.accessType) resourceQuery.accessType = achievement.condition.accessType;
         return await ResourceAccess.countDocuments(resourceQuery);
       case 'study_streak':
         const streakUser = await User.findById(userId).select('streak').lean();
-        return streakUser ? streakUser.streak : 0;
+        return streakUser?.streak || 0;
       default:
         console.warn(`Progress calculation not implemented for trigger: ${achievement.trigger}`);
         return 0;
@@ -97,32 +81,20 @@ async function calculateAchievementProgress(userId, achievement) {
 }
 
 
-// --- Helper function to get Quiz Stats (Reads stored aggregates + calculates best score) ---
+// --- Helper function to get Quiz Stats ---
 async function getQuizStats(userId) {
     try {
-        // console.log(`[getQuizStats] START for user ${userId}`);
-        const user = await User.findById(userId)
-                           .select('quizCompletedCount quizTotalPercentageScoreSum points quizPointsEarned')
-                           .lean();
-        if (!user) {
-            console.warn(`[getQuizStats] User not found for ID ${userId}`);
-            return { completed: 0, avgScore: 0, pointsEarned: 0, totalPoints: 0, passed: 0, failed: 0, bestScore: 0 };
-        }
-        const count = typeof user.quizCompletedCount === 'number' ? user.quizCompletedCount : 0;
-        const sum = typeof user.quizTotalPercentageScoreSum === 'number' ? user.quizTotalPercentageScoreSum : 0;
+        const user = await User.findById(userId).select('quizCompletedCount quizTotalPercentageScoreSum points quizPointsEarned').lean();
+        if (!user) { return { completed: 0, avgScore: 0, pointsEarned: 0, totalPoints: 0, passed: 0, failed: 0, bestScore: 0 }; }
+        const count = user.quizCompletedCount || 0;
+        const sum = user.quizTotalPercentageScoreSum || 0;
         let calculatedAvgScore = (count > 0) ? Math.round(Math.max(0, sum / count)) : 0;
-        // console.log(`[getQuizStats] Values before return: count=${count}, sum=${sum}, calculatedAvgScore=${calculatedAvgScore}, points=${user.points || 0}, quizPoints=${user.quizPointsEarned || 0}`);
         let bestScore = 0;
         if (count > 0) {
             const bestAttempt = await QuizAttempt.findOne({ user: userId }).sort({ percentageScore: -1 }).limit(1).select('percentageScore').lean();
-            bestScore = bestAttempt ? bestAttempt.percentageScore : 0;
+            bestScore = bestAttempt?.percentageScore || 0;
         }
-        const result = {
-            completed: count, avgScore: calculatedAvgScore, pointsEarned: user.quizPointsEarned || 0,
-            totalPoints: user.points || 0, passed: 0, failed: 0, bestScore: bestScore,
-        };
-        // console.log(`[getQuizStats] Calculated Result for ${userId}:`, result);
-        return result;
+        return { completed: count, avgScore: calculatedAvgScore, pointsEarned: user.quizPointsEarned || 0, totalPoints: user.points || 0, passed: 0, failed: 0, bestScore: bestScore };
     } catch (error) {
         console.error(`[getQuizStats] Error for user ${userId}:`, error);
         return { completed: 0, avgScore: 0, pointsEarned: 0, totalPoints: 0, passed: 0, failed: 0, bestScore: 0 };
@@ -191,25 +163,17 @@ function getRandomPastDate(minDaysAgo, maxDaysAgo) {
 exports.getDashboardSummary = async (req, res, next) => {
     try {
         const userId = req.params.userId;
-        if (!isValidObjectId(userId)) {
-            return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
-        }
-        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
-            return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this summary' });
-        }
-        // console.log(`[getDashboardSummary] START Fetching summary for userId: ${userId}`);
+        if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
+        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this summary' });
         const user = await User.findById(userId).select('name level xp points quizPointsEarned streak subjects achievements').lean();
-        if (!user) {
-            // console.log("[getDashboardSummary] User not found, returning 404");
-            return res.status(404).json({ status: 'fail', message: 'User not found' });
-        }
+        if (!user) return res.status(404).json({ status: 'fail', message: 'User not found' });
         const userProgressRecords = await UserProgress.find({ user: userId }).populate('subject', 'name color').lean();
         const overallProgressPerSubject = userProgressRecords.map(record => {
             if (!record?.subject) return null;
             let calculatedProgress = record.overallSubjectProgress || 0;
-            if (record.topicProgress && record.topicProgress.length > 0) {
+            if (record.topicProgress?.length > 0) {
                 const totalProgress = record.topicProgress.reduce((sum, topic) => sum + (topic?.progress || 0), 0);
-                if (record.topicProgress.length > 0) calculatedProgress = Math.round(totalProgress / record.topicProgress.length);
+                calculatedProgress = Math.round(totalProgress / record.topicProgress.length);
             }
             return { subjectId: record.subject._id.toString(), name: record.subject.name, color: record.subject.color || '#808080', progress: calculatedProgress };
         }).filter(sp => sp !== null);
@@ -222,13 +186,11 @@ exports.getDashboardSummary = async (req, res, next) => {
         const xpInLevel = xpForNextLevel - xpForCurrentLevel;
         if (xpInLevel > 0) { levelProgress = Math.min(100, Math.max(0, ((currentXP - xpForCurrentLevel) / xpInLevel) * 100)); }
         else if (currentXP >= xpForCurrentLevel) { levelProgress = 100; }
-        // console.log(`[getDashboardSummary] Calling getQuizStats for ${userId}`);
         const quizStats = await getQuizStats(userId);
-        // console.log(`[getDashboardSummary] Received quizStats:`, quizStats);
         const forumStats = await getForumStats(userId);
         const resourceStats = await getResourceStats(userId);
         const userAchievementPoints = await calculateAchievementPoints(userId);
-        const studyStats = { hours: Math.floor(Math.random() * 100) + 50, lastSession: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000)) };
+        const studyStats = { hours: Math.floor(Math.random() * 100) + 50, lastSession: getRandomPastDate(1, 7) }; // Mock study stats
         const userRank = await getUserRank(userId);
         const dashboardSummary = {
             userName: user.name, level: currentLevel, xp: currentXP, pointsToNextLevel: pointsToNextLevel,
@@ -239,12 +201,11 @@ exports.getDashboardSummary = async (req, res, next) => {
             quizStats: { completed: quizStats.completed, avgScore: quizStats.avgScore, bestScore: quizStats.bestScore, pointsEarned: quizStats.pointsEarned },
             forumStats, resourceStats, studyStats, rank: userRank
         };
-        // console.log("[getDashboardSummary] Sending final summary response...");
         res.status(200).json({ status: 'success', data: { summary: dashboardSummary } });
     } catch (err) {
         console.error("[getDashboardSummary] Error:", err);
         if (!res.headersSent) next(err);
-        else console.error("[getDashboardSummary] Headers already sent, could not forward error.");
+        else console.error("[getDashboardSummary] Headers already sent.");
     }
 };
 
@@ -256,18 +217,10 @@ exports.getDashboardSummary = async (req, res, next) => {
 exports.getDetailedSubjectProgress = async (req, res, next) => {
     try {
         const { userId, subjectId } = req.params;
-        if (!isValidObjectId(userId) || !isValidObjectId(subjectId)) {
-            return res.status(400).json({ status: 'fail', message: 'Invalid User or Subject ID format' });
-        }
-        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
-             return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this progress data' });
-        }
-        const progressDoc = await UserProgress.findOne({ user: userId, subject: subjectId })
-                                          .populate({ path: 'subject', select: 'name color topics' })
-                                          .lean();
-        if (!progressDoc || !progressDoc.subject) {
-            return res.status(404).json({ status: 'fail', message: 'Progress data not found for this subject.' });
-        }
+        if (!isValidObjectId(userId) || !isValidObjectId(subjectId)) return res.status(400).json({ status: 'fail', message: 'Invalid User or Subject ID format' });
+        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this progress data' });
+        const progressDoc = await UserProgress.findOne({ user: userId, subject: subjectId }).populate({ path: 'subject', select: 'name color topics' }).lean();
+        if (!progressDoc?.subject) return res.status(404).json({ status: 'fail', message: 'Progress data not found for this subject.' });
         const detailedTopicProgress = progressDoc.subject.topics.map(subjectTopic => {
              const topicProgressEntry = progressDoc.topicProgress.find(tp => tp.topic.equals(subjectTopic._id));
              return { id: subjectTopic._id.toString(), name: subjectTopic.name, progress: topicProgressEntry?.progress || 0, mastery: topicProgressEntry?.mastery || 'low' };
@@ -285,101 +238,50 @@ exports.getDetailedSubjectProgress = async (req, res, next) => {
     }
 };
 
-// ========================================================================
-// === THIS IS THE FUNCTION THAT NEEDS TO BE CORRECTED ===
-// ========================================================================
 /**
- * @desc     Get all achievements, indicating which are unlocked by the user AND the total points/XP from unlocked ones
+ * @desc     Get user achievements with unlock status, total points, and total XP
  * @route    GET /api/users/:userId/achievements
- * @access   Private (Should be protected)
+ * @access   Private
  */
 exports.getUserAchievements = async (req, res, next) => {
-    // ***** START: Logic copied from achievementController.js *****
     try {
         const { userId } = req.params;
         if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
-
-        // Authorization check
-        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
-            return res.status(403).json({ status: 'fail', message: 'You do not have permission to access these achievements' });
-        }
-
-        // Get all achievement definitions
+        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) return res.status(403).json({ status: 'fail', message: 'You do not have permission to access these achievements' });
         const achievements = await Achievement.find().lean();
-
-        // Fetch user's achievements array AND total XP
         const user = await User.findById(userId).select('achievements xp').lean(); // Fetch 'xp'
-
-        if (!user) {
-            return res.status(404).json({ status: 'fail', message: 'User not found.' });
-        }
-
-        // Add console log to check fetched user XP
-        console.log(`[userController.getUserAchievements] Fetched user ${userId}, XP: ${user.xp}`);
-
+        if (!user) return res.status(404).json({ status: 'fail', message: 'User not found.' });
+        // console.log(`[userController.getUserAchievements] Fetched user ${userId}, XP: ${user.xp}`); // Debug Log 1
         const unlockedAchievementIds = new Set((user.achievements || []).map(id => id.toString()));
-
-        // Calculate total points from unlocked achievements using the helper
         const totalAchievementPoints = await calculateAchievementPoints(userId);
-
-        // Map achievements for response
         const achievementsWithStatus = await Promise.all(
           achievements.map(async (achievement) => {
             const isUnlocked = unlockedAchievementIds.has(achievement._id.toString());
             let progressValue = 0;
             let totalNeeded = achievement.requirement || 1;
-
-            if (!isUnlocked) {
-              progressValue = await calculateAchievementProgress(userId, achievement);
-            }
-
-            // Mock date for now - replace with actual unlock date if stored
-            const dateUnlocked = isUnlocked ?
-              getRandomPastDate(30, 180).toISOString().split('T')[0] : // Use helper for mock date
-              null;
-
+            if (!isUnlocked) { progressValue = await calculateAchievementProgress(userId, achievement); }
+            const dateUnlocked = isUnlocked ? getRandomPastDate(30, 180).toISOString().split('T')[0] : null;
             return {
-              id: achievement._id.toString(),
-              title: achievement.title,
-              description: achievement.description,
-              icon: achievement.icon,
-              category: achievement.category,
-              unlocked: isUnlocked,
+              id: achievement._id.toString(), title: achievement.title, description: achievement.description,
+              icon: achievement.icon, category: achievement.category, unlocked: isUnlocked,
               progress: isUnlocked ? 100 : Math.min(100, Math.round((progressValue / totalNeeded) * 100)),
-              totalNeeded,
-              xp: achievement.xp || 0,
-              points: achievement.points || 0,
-              rarity: achievement.rarity,
-              unlockedAt: dateUnlocked // Match frontend expectation
+              totalNeeded, xp: achievement.xp || 0, points: achievement.points || 0,
+              rarity: achievement.rarity, unlockedAt: dateUnlocked
             };
           })
         );
-
-        // Prepare response data
         const responseData = {
             achievements: achievementsWithStatus,
-            totalAchievementPoints: totalAchievementPoints, // Points ONLY from unlocked achievements
-            // *** THIS IS THE KEY CHANGE ***
-            totalUserXp: user.xp || 0 // User's TOTAL XP from all sources
+            totalAchievementPoints: totalAchievementPoints,
+            totalUserXp: user.xp || 0 // User's TOTAL XP
         };
-
-        // Add console log to check the response data being sent
-        console.log(`[userController.getUserAchievements] Sending response for user ${userId}:`, JSON.stringify(responseData));
-
-        res.status(200).json({
-            status: 'success',
-            results: achievementsWithStatus.length,
-            data: responseData
-        });
+        // console.log(`[userController.getUserAchievements] Sending response for user ${userId}:`, JSON.stringify(responseData)); // Debug Log 2
+        res.status(200).json({ status: 'success', results: achievementsWithStatus.length, data: responseData });
     } catch (err) {
-        console.error("[userController.getUserAchievements] Error:", err); // Log specific function
+        console.error("[userController.getUserAchievements] Error:", err);
         next(err);
     }
-    // ***** END: Logic copied from achievementController.js *****
 };
-// ========================================================================
-// ========================================================================
-
 
 /**
  * @desc     Get user's recent activity
@@ -390,9 +292,7 @@ exports.getRecentActivity = async (req, res, next) => {
     try {
         const { userId } = req.params;
         if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
-        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) {
-            return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this activity' });
-        }
+        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this activity' });
         const userExists = await User.findById(userId).lean();
         if (!userExists) return res.status(404).json({ status: 'fail', message: 'User not found' });
         const limit = 15;
@@ -425,18 +325,9 @@ exports.getRecentActivity = async (req, res, next) => {
 exports.getLeaderboard = async (req, res, next) => {
     try {
         const limit = parseInt(req.query.limit, 10) || 20;
-        if (isNaN(limit) || limit <= 0 || limit > 100) {
-            return res.status(400).json({ status: 'fail', message: 'Invalid or excessive limit parameter.' });
-        }
-        const leaderboard = await User.find()
-                                     .select('name points level')
-                                     .sort({ points: -1, level: -1, xp: -1 })
-                                     .limit(limit)
-                                     .lean();
-        const rankedLeaderboard = leaderboard.map((user, index) => ({
-            id: user._id.toString(), name: user.name, points: user.points || 0,
-            level: user.level || 1, rank: index + 1
-        }));
+        if (isNaN(limit) || limit <= 0 || limit > 100) return res.status(400).json({ status: 'fail', message: 'Invalid or excessive limit parameter.' });
+        const leaderboard = await User.find().select('name points level').sort({ points: -1, level: -1, xp: -1 }).limit(limit).lean();
+        const rankedLeaderboard = leaderboard.map((user, index) => ({ id: user._id.toString(), name: user.name, points: user.points || 0, level: user.level || 1, rank: index + 1 }));
         res.status(200).json({ status: 'success', results: rankedLeaderboard.length, data: { leaderboard: rankedLeaderboard } });
     } catch (err) {
         console.error('[Backend] Error fetching leaderboard:', err);
@@ -454,24 +345,17 @@ exports.updateUserProfile = async (req, res, next) => {
         const { id } = req.params;
         if (!isValidObjectId(id)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
         if (!req.user) return res.status(401).json({ status: 'fail', message: 'Not authorized. Please log in.' });
-        if (req.user.id !== id && req.user.role !== 'admin') {
-            return res.status(403).json({ status: 'fail', message: 'You do not have permission to update this profile' });
-        }
+        if (req.user.id !== id && req.user.role !== 'admin') return res.status(403).json({ status: 'fail', message: 'You do not have permission to update this profile' });
         const restrictedFields = [ 'password', 'role', 'xp', 'level', 'points', 'achievements', 'streak', 'lastActive', 'passwordResetOtp', 'passwordResetExpires', 'quizCompletedCount', 'quizTotalPercentageScoreSum', 'quizPointsEarned' ];
         const updateData = { ...req.body };
         restrictedFields.forEach(field => delete updateData[field]);
-        if (updateData.email && !validator.isEmail(updateData.email)) {
-             return res.status(400).json({ status: 'fail', message: 'Invalid email format.' });
-        }
-        const updatedUser = await User.findByIdAndUpdate(id, updateData, { new: true, runValidators: true })
-                                     .select('-password -passwordResetOtp -passwordResetExpires');
+        if (updateData.email && !validator.isEmail(updateData.email)) return res.status(400).json({ status: 'fail', message: 'Invalid email format.' });
+        const updatedUser = await User.findByIdAndUpdate(id, updateData, { new: true, runValidators: true }).select('-password -passwordResetOtp -passwordResetExpires');
         if (!updatedUser) return res.status(404).json({ status: 'fail', message: 'User not found' });
         res.status(200).json({ status: 'success', data: { user: updatedUser } });
     } catch (err) {
         console.error("[Backend] Error updating user profile:", err);
-        if (err.code === 11000 && err.keyPattern?.email) {
-            return res.status(400).json({ status: 'fail', message: 'Email address already in use.' });
-        }
+        if (err.code === 11000 && err.keyPattern?.email) return res.status(400).json({ status: 'fail', message: 'Email address already in use.' });
         if (err.name === 'ValidationError') {
              const errors = Object.values(err.errors).map(el => el.message);
              return res.status(400).json({ status: 'fail', message: `Invalid input data. ${errors.join('. ')}` });
@@ -491,9 +375,7 @@ exports.getUserProfile = async (req, res, next) => {
         if (!isValidObjectId(id)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
         const isOwnProfileOrAdmin = req.user && (req.user.id === id || req.user.role === 'admin');
         let selectFields = 'name level createdAt';
-        if (isOwnProfileOrAdmin) {
-            selectFields = '-password -passwordResetOtp -passwordResetExpires';
-        }
+        if (isOwnProfileOrAdmin) { selectFields = '-password -passwordResetOtp -passwordResetExpires'; }
         const userQuery = User.findById(id).select(selectFields);
         const user = await userQuery.lean();
         if (!user) return res.status(404).json({ status: 'fail', message: 'User not found' });
@@ -519,23 +401,42 @@ exports.getUserProgress = async (req, res, next) => {
         const { id } = req.params;
         if (!isValidObjectId(id)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
         if (!req.user) return res.status(401).json({ status: 'fail', message: 'Not authorized. Please log in.' });
-        if (req.user.id !== id && req.user.role !== 'admin') {
-            return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this progress data' });
-        }
-        const progressRecords = await UserProgress.find({ user: id })
-            .populate('subject', 'name color icon')
-            .lean();
+        if (req.user.id !== id && req.user.role !== 'admin') return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this progress data' });
+        const progressRecords = await UserProgress.find({ user: id }).populate('subject', 'name color icon').lean();
         const formattedProgress = progressRecords.map(item => {
             if (!item.subject) return null;
             const overallProgress = item.overallSubjectProgress || 0;
-            return {
-                subjectId: item.subject._id.toString(), name: item.subject.name, color: item.subject.color,
-                icon: item.subject.icon, overallProgress: overallProgress, lastUpdated: item.updatedAt?.toISOString()
-            };
+            return { subjectId: item.subject._id.toString(), name: item.subject.name, color: item.subject.color, icon: item.subject.icon, overallProgress: overallProgress, lastUpdated: item.updatedAt?.toISOString() };
         }).filter(p => p !== null);
         res.status(200).json({ status: 'success', results: formattedProgress.length, data: { progress: formattedProgress } });
     } catch (err) {
         console.error("[Backend] Error fetching user progress:", err);
+        next(err);
+    }
+};
+
+
+/**
+ * @desc     Get user's active dates for the calendar
+ * @route    GET /api/users/:userId/activity-dates
+ * @access   Private
+ */
+exports.getUserActivityDates = async (req, res, next) => {
+    try {
+        const { userId } = req.params;
+        if (!isValidObjectId(userId)) return res.status(400).json({ status: 'fail', message: 'Invalid User ID format' });
+        if (!req.user || (req.user.id !== userId && req.user.role !== 'admin')) return res.status(403).json({ status: 'fail', message: 'You do not have permission to access this data' });
+        const queryDate = req.query.month ? new Date(req.query.month + '-01T00:00:00Z') : new Date(); // Ensure parsing as UTC start of month
+        if (isNaN(queryDate)) return res.status(400).json({ status: 'fail', message: 'Invalid month query parameter format. Use YYYY-MM.' });
+        const startDate = startOfMonth(queryDate);
+        const endDate = endOfMonth(queryDate);
+        // console.log(`[getUserActivityDates] Fetching dates for user ${userId} between ${format(startDate, 'yyyy-MM-dd')} and ${format(endDate, 'yyyy-MM-dd')}`);
+        const activityLogs = await DailyActivityLog.find({ user: userId, date: { $gte: startDate, $lte: endDate } }).select('date').lean();
+        const activeDates = activityLogs.map(log => format(log.date, 'yyyy-MM-dd')); // Format consistently
+        // console.log(`[getUserActivityDates] Found ${activeDates.length} active dates.`);
+        res.status(200).json({ status: 'success', data: { dates: activeDates } });
+    } catch (err) {
+        console.error("[getUserActivityDates] Error:", err);
         next(err);
     }
 };
