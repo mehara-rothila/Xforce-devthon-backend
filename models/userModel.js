@@ -16,7 +16,8 @@ const userSchema = new mongoose.Schema({
   lastActive: { type: Date, default: Date.now },
   streak: { type: Number, default: 0 },
   achievements: [{ type: mongoose.Schema.ObjectId, ref: 'Achievement' }],
-  role: { type: String, enum: ['user', 'admin', 'moderator'], default: 'user' },
+// Line 17: Add 'preview' to the enum of allowed roles
+role: { type: String, enum: ['user', 'admin', 'moderator', 'preview'], default: 'user' },
   passwordResetOtp: { type: String, select: false },
   passwordResetExpires: { type: Date, select: false },
   // --- Aggregated Quiz Stats ---

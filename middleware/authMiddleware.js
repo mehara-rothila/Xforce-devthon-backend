@@ -55,7 +55,7 @@ exports.protect = async (req, res, next) => {
   }
 };
 
-// --- restrictTo Middleware (Keep existing or add if needed) ---
+// Replace the existing restrictTo function with this one
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
     // roles ['admin', 'moderator']. role='user'
@@ -63,6 +63,25 @@ exports.restrictTo = (...roles) => {
          console.error('[Restrict Middleware] req.user or req.user.role not found. Is protect running first?');
          return res.status(500).json({ status: 'error', message: 'User role not identified.' });
     }
+    
+    // Special handling for preview role
+    if (req.user.role === 'preview') {
+      // Check if this is a GET request (view-only)
+      if (req.method === 'GET') {
+        console.log(`[Restrict Middleware] Preview access granted for GET request`);
+        // Add a flag to indicate preview mode
+        req.isPreviewMode = true;
+        return next();
+      } else {
+        console.log(`[Restrict Middleware] Preview access denied for non-GET request`);
+        return res.status(403).json({
+          status: 'fail',
+          message: 'Preview users can only view content, not modify it'
+        });
+      }
+    }
+    
+    // Standard role check for non-preview users
     if (!roles.includes(req.user.role)) {
       console.log(`[Restrict Middleware] Permission denied for role: ${req.user.role}. Required: ${roles.join(', ')}`);
       return res.status(403).json({ // 403 Forbidden
@@ -70,6 +89,7 @@ exports.restrictTo = (...roles) => {
           message: 'You do not have permission to perform this action'
       });
     }
+    
     console.log(`[Restrict Middleware] Permission granted for role: ${req.user.role}`);
     next();
   };
