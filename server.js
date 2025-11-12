@@ -7,6 +7,9 @@ const dotenv = require('dotenv');
 const path = require('path');
 const multer = require('multer'); // Import multer for error handling
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
+const cookieParser = require('cookie-parser');
 
 // Load environment variables
 dotenv.config();
@@ -298,15 +301,65 @@ const startServer = () => {
   // Apply middleware
   app.use(helmet()); // Security headers
   app.use(morgan('dev')); // Logging
-  app.use(cors()); // Enable CORS - configure origins for production
-  app.use(express.json()); // Parse JSON bodies
-  app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+
+  // CORS configuration - whitelist specific origins
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3002',
+    'https://learnify.mehara.io',
+    'https://gamifiedlearning12.netlify.app'
+  ];
+
+  app.use(cors({
+    origin: function(origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) === -1) {
+        const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+        return callback(new Error(msg), false);
+      }
+      return callback(null, true);
+    },
+    credentials: true, // Allow cookies to be sent
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  }));
+
+  // Rate limiting for authentication routes
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 requests per windowMs
+    message: 'Too many authentication attempts from this IP, please try again after 15 minutes.',
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  });
+
+  // General API rate limiter
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // Body parsers
+  app.use(express.json({ limit: '10mb' })); // Parse JSON bodies with size limit
+  app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Parse URL-encoded bodies with size limit
+  app.use(cookieParser()); // Parse cookies
+
+  // Data sanitization against NoSQL query injection
+  app.use(mongoSanitize());
+
+  // Apply general rate limiting to all API routes
+  app.use('/api/', apiLimiter);
 
   // --- Serve Static Files ---
   app.use(express.static(path.join(__dirname, 'public')));
 
   // Define API routes
-  app.use('/api/auth', authRoutes);
+  // Apply stricter rate limiting to auth routes
+  app.use('/api/auth', authLimiter, authRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/subjects', subjectRoutes);
   app.use('/api/forum', forumRoutes);
