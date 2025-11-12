@@ -13,6 +13,9 @@ router.post('/login', authController.login);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 
+// Google OAuth Route
+router.post('/google', authController.googleAuth);
+
 // Private Route - Get Current User Details
 // Apply the 'protect' middleware before the controller function
 router.get('/me', protect, authController.getMe); // <-- Added protect middleware
