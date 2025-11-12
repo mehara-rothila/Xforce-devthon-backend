@@ -4,7 +4,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs'); // File system module to create directory if needed
-const { protect, restrictTo } = require('../middleware/auth'); // Assuming you want to protect uploads
+const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 

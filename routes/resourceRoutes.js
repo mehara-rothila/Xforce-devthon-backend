@@ -1,6 +1,6 @@
 const express = require('express');
 const resourceController = require('../controllers/resourceController');
-const { protect, restrictTo } = require('../middleware/auth'); // Assuming auth middleware is here
+const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 

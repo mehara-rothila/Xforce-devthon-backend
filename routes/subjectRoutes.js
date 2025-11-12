@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const subjectController = require('../controllers/subjectController');
 const quizController = require('../controllers/quizController');
-const { protect, restrictTo } = require('../middleware/auth');
+const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 // --- Debugging Logs ---
 // Add these logs to check if the functions are correctly imported before defining routes

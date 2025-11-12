@@ -1,6 +1,6 @@
 const express = require('express');
 const rewardController = require('../controllers/rewardController');
-const { protect, restrictTo } = require('../middleware/auth'); // Import auth middleware
+const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
