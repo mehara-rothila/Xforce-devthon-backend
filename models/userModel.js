@@ -6,7 +6,12 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: [true, 'Please provide your name'], trim: true },
   email: { type: String, required: [true, 'Please provide your email'], unique: true, lowercase: true },
   phoneNumber: { type: String, trim: true },
-  password: { type: String, required: [true, 'Please provide a password'], minlength: [8, 'Password must be at least 8 characters long'], select: false },
+  password: { type: String, minlength: [10, 'Password must be at least 10 characters long'], select: false },
+  // OAuth fields
+  googleId: { type: String, sparse: true },
+  profilePicture: { type: String },
+  isOAuthUser: { type: Boolean, default: false },
+  authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
   subjects: [{ type: mongoose.Schema.ObjectId, ref: 'Subject' }],
   level: { type: Number, default: 1 },
   xp: { type: Number, default: 0 },
@@ -20,6 +25,9 @@ const userSchema = new mongoose.Schema({
 role: { type: String, enum: ['user', 'admin', 'moderator', 'preview'], default: 'user' },
   passwordResetOtp: { type: String, select: false },
   passwordResetExpires: { type: Date, select: false },
+  // Account lockout fields
+  failedLoginAttempts: { type: Number, default: 0 },
+  accountLockedUntil: { type: Date, default: null },
   // --- Aggregated Quiz Stats ---
   quizCompletedCount: { type: Number, default: 0, min: 0 },
   quizTotalPercentageScoreSum: { type: Number, default: 0, min: 0 },
