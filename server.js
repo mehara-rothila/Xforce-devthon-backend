@@ -307,7 +307,8 @@ const startServer = () => {
     'http://localhost:3000',
     'http://localhost:3002',
     'https://learnify.mehara.io',
-    'https://gamifiedlearning12.netlify.app'
+    'https://gamifiedlearning12.netlify.app',
+    'https://morning-forest-83026-b8fcac26d856.herokuapp.com'
   ];
 
   app.use(cors({
