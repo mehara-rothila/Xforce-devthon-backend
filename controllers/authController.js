@@ -5,10 +5,14 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const validator = require('validator');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/userModel'); // Adjust path if needed
 const DailyActivityLog = require('../models/dailyActivityLogModel'); // *** ADD THIS ***
 const sendEmail = require('../utils/email'); // Uses the updated email utility
 const { startOfDay, subDays, isSameDay } = require('date-fns'); // *** ADD date-fns ***
+
+// Initialize Google OAuth Client
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // --- Email Template (Password Reset) ---
 const PASSWORD_RESET_TEMPLATE = `
@@ -51,8 +55,28 @@ exports.register = async (req, res, next) => {
         if (password !== passwordConfirm) {
           return res.status(400).json({ status: 'fail', message: 'Passwords do not match.' });
         }
-         if (password.length < 8) {
-           return res.status(400).json({ status: 'fail', message: 'Password must be at least 8 characters long.' });
+
+        // Enhanced password validation
+        if (password.length < 10) {
+          return res.status(400).json({ status: 'fail', message: 'Password must be at least 10 characters long.' });
+        }
+        if (!/[a-z]/.test(password)) {
+          return res.status(400).json({ status: 'fail', message: 'Password must contain at least one lowercase letter.' });
+        }
+        if (!/[A-Z]/.test(password)) {
+          return res.status(400).json({ status: 'fail', message: 'Password must contain at least one uppercase letter.' });
+        }
+        if (!/[0-9]/.test(password)) {
+          return res.status(400).json({ status: 'fail', message: 'Password must contain at least one number.' });
+        }
+        if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+          return res.status(400).json({ status: 'fail', message: 'Password must contain at least one special character (!@#$%^&*()_+-=[]{};\':"|,.<>?/)' });
+        }
+
+        // Check for common weak passwords
+        const commonPasswords = ['password123', 'qwerty1234', 'admin12345', '12345678910', 'welcome123'];
+        if (commonPasswords.includes(password.toLowerCase())) {
+          return res.status(400).json({ status: 'fail', message: 'This password is too common. Please choose a stronger password.' });
         }
 
         // 2. Check if user already exists
@@ -130,14 +154,54 @@ exports.login = async (req, res, next) => {
           return res.status(400).json({ status: 'fail', message: 'Please provide email and password.' });
         }
 
-        // 2. Check if user exists & get password + streak info
-        // *** MODIFIED: Select streak and lastActive ***
-        const user = await User.findOne({ email }).select('+password +streak +lastActive');
+        // 2. Check if user exists & get password + lockout info
+        const user = await User.findOne({ email }).select('+password +streak +lastActive +failedLoginAttempts +accountLockedUntil');
 
-        // 3. Check password validity
-        if (!user || !(await bcrypt.compare(password, user.password))) {
+        if (!user) {
           return res.status(401).json({ status: 'fail', message: 'Incorrect email or password.' });
         }
+
+        // 3. Check if account is locked
+        if (user.accountLockedUntil && user.accountLockedUntil > new Date()) {
+          const minutesRemaining = Math.ceil((user.accountLockedUntil - new Date()) / (1000 * 60));
+          return res.status(403).json({
+            status: 'fail',
+            message: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${minutesRemaining} minutes.`
+          });
+        }
+
+        // 4. Check password validity
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+
+        if (!isPasswordValid) {
+          // Increment failed login attempts
+          user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+
+          // Lock account after 5 failed attempts
+          if (user.failedLoginAttempts >= 5) {
+            user.accountLockedUntil = new Date(Date.now() + 30 * 60 * 1000); // Lock for 30 minutes
+            await user.save({ validateBeforeSave: false });
+            return res.status(403).json({
+              status: 'fail',
+              message: 'Account locked due to too many failed login attempts. Please try again in 30 minutes or reset your password.'
+            });
+          }
+
+          await user.save({ validateBeforeSave: false });
+          const attemptsRemaining = 5 - user.failedLoginAttempts;
+          return res.status(401).json({
+            status: 'fail',
+            message: `Incorrect email or password. ${attemptsRemaining} attempts remaining before account lockout.`
+          });
+        }
+
+        // Password is correct - reset failed login attempts
+        if (user.failedLoginAttempts > 0 || user.accountLockedUntil) {
+          user.failedLoginAttempts = 0;
+          user.accountLockedUntil = null;
+          await user.save({ validateBeforeSave: false });
+        }
+
         console.log('[Backend] User found and password verified:', user._id);
 
         // *** ADD: Daily Activity Logging & Streak Calculation ***
@@ -380,6 +444,136 @@ exports.getMe = async (req, res, next) => {
         console.error("[Backend] Error fetching user in getMe:", err);
         if (!res.headersSent) {
              res.status(500).json({ status: 'error', message: 'Could not fetch user data.' });
+        }
+    }
+};
+
+/**
+ * @desc    Google OAuth Login/Register
+ * @route   POST /api/auth/google
+ * @access  Public
+ */
+exports.googleAuth = async (req, res, next) => {
+    try {
+        const { credential } = req.body;
+        console.log('[Backend] Google OAuth attempt received');
+
+        if (!credential) {
+            return res.status(400).json({ status: 'fail', message: 'Google credential is required.' });
+        }
+
+        // Verify Google token
+        const ticket = await googleClient.verifyIdToken({
+            idToken: credential,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload();
+        const { sub: googleId, email, name, picture } = payload;
+
+        console.log(`[Backend] Google OAuth verified for email: ${email}`);
+
+        // Check if user exists
+        let user = await User.findOne({ $or: [{ googleId }, { email }] });
+
+        if (user) {
+            // User exists - update Google ID if not set
+            if (!user.googleId) {
+                user.googleId = googleId;
+                user.profilePicture = picture;
+                user.isOAuthUser = true;
+                user.authProvider = 'google';
+                await user.save({ validateBeforeSave: false });
+                console.log(`[Backend] Linked existing account ${user._id} to Google`);
+            }
+
+            // Update activity and streak
+            const now = new Date();
+            const todayUTCStart = startOfDay(now);
+            const yesterdayUTCStart = startOfDay(subDays(now, 1));
+
+            try {
+                await DailyActivityLog.findOneAndUpdate(
+                    { user: user._id, date: todayUTCStart },
+                    { $set: { lastTimestamp: now } },
+                    { upsert: true, new: true, setDefaultsOnInsert: true }
+                );
+
+                const wasActiveYesterday = await DailyActivityLog.findOne({
+                    user: user._id,
+                    date: yesterdayUTCStart
+                });
+
+                let newStreak = user.streak || 0;
+                const lastActiveDateStart = user.lastActive ? startOfDay(user.lastActive) : null;
+
+                if (!lastActiveDateStart || !isSameDay(todayUTCStart, lastActiveDateStart)) {
+                    if (wasActiveYesterday) {
+                        newStreak++;
+                        console.log(`[Backend] User ${user._id} was active yesterday. Incrementing streak to ${newStreak}`);
+                    } else {
+                        newStreak = 1;
+                        console.log(`[Backend] User ${user._id} was NOT active yesterday. Resetting streak to 1.`);
+                    }
+                    user.streak = newStreak;
+                    user.lastActive = now;
+                    await user.save({ validateBeforeSave: false });
+                }
+            } catch (logError) {
+                console.error(`[Backend] Error logging activity for Google OAuth user ${user._id}:`, logError);
+            }
+
+            console.log('[Backend] Existing user logged in via Google:', user._id);
+        } else {
+            // Create new user
+            user = await User.create({
+                name,
+                email,
+                googleId,
+                profilePicture: picture,
+                isOAuthUser: true,
+                authProvider: 'google',
+                lastActive: new Date()
+            });
+            console.log('[Backend] New user created via Google OAuth:', user._id);
+
+            // Log first activity
+            try {
+                const todayUTC = startOfDay(new Date());
+                await DailyActivityLog.findOneAndUpdate(
+                    { user: user._id, date: todayUTC },
+                    { $set: { lastTimestamp: new Date() } },
+                    { upsert: true, new: true, setDefaultsOnInsert: true }
+                );
+                console.log(`[Backend] Logged first activity for new Google user ${user._id}`);
+            } catch (logError) {
+                console.error(`[Backend] Error logging first activity for Google user ${user._id}:`, logError);
+            }
+        }
+
+        // Generate JWT Token
+        const token = signToken(user._id);
+        console.log('[Backend] JWT Token generated for Google OAuth user');
+
+        // Send Response
+        const userResponse = user.toObject();
+        delete userResponse.password;
+        delete userResponse.passwordResetOtp;
+        delete userResponse.passwordResetExpires;
+
+        res.status(200).json({
+            status: 'success',
+            token,
+            data: { user: userResponse },
+        });
+
+    } catch (err) {
+        console.error("[Backend] Error during Google OAuth:", err);
+        if (!res.headersSent) {
+            res.status(500).json({
+                status: 'error',
+                message: 'Google authentication failed. Please try again.'
+            });
         }
     }
 };
